@@ -20,6 +20,11 @@ func TestCSVRead(t *testing.T) {
 	require.GreaterOrEqual(t, len(fileData), 1)
 
 	for i, row := range fileData {
-		require.Equal(t, 5, len(row), "Row %d does not have 5 fields: %v", i, row)
+		require.IsType(t, "string", row.Species, "Row %d is not of the right type string: ", i)
+		require.IsType(t, 1.0, row.PetalLength, "Row %d is not of the right type float: ", i)
+		require.IsType(t, 1.0, row.PetalWidth, "Row %d is not of the right type float: ", i)
+		require.IsType(t, 1.0, row.SepalLength, "Row %d is not of the right type float: ", i)
+		require.IsType(t, 1.0, row.SepalWidth, "Row %d is not of the right type float: ", i)
+		require.Nil(t, row.ParseError, "Row %d has a parse error: %v", i, row.ParseError)
 	}
 }
