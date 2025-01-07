@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/go-gota/gota/dataframe"
 )
 
 type CSVReaderConfig struct {
@@ -81,4 +83,16 @@ func ReadCsvFile(filePath string, config *CSVReaderConfig) ([]CSVRecord, error) 
 	}
 
 	return data, nil
+}
+
+func ReadCsvWithDataFrame(filePath string, config *CSVReaderConfig) (*dataframe.DataFrame, error) {
+	irisFile, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer irisFile.Close()
+
+	irisDF := dataframe.ReadCSV(irisFile)
+
+	return &irisDF, nil
 }

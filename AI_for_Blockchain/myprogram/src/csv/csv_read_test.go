@@ -1,10 +1,12 @@
 package csv_test
 
 import (
-	"myprogram/src/csv"
+	"fmt"
 	"os"
 	"path"
 	"testing"
+
+	"github.com/peartes/myprogram/src/csv"
 
 	"github.com/stretchr/testify/require"
 )
@@ -27,4 +29,15 @@ func TestCSVRead(t *testing.T) {
 		require.IsType(t, 1.0, row.SepalWidth, "Row %d is not of the right type float: ", i)
 		require.Nil(t, row.ParseError, "Row %d has a parse error: %v", i, row.ParseError)
 	}
+}
+
+func TestCSVReadDataFrame(t *testing.T) {
+	// Code for the main function
+	fp, err := os.Getwd()
+	require.NoError(t, err)
+
+	fileData, err := csv.ReadCsvWithDataFrame(path.Join(fp, "../", "../", "testdata", "csv", "iris", "iris.data"), &csv.CSVReaderConfig{FieldsPerRecord: 5})
+	require.NoError(t, err)
+
+	fmt.Println(fileData)
 }
