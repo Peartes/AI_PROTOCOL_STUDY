@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/go-gota/gota/dataframe"
+	"github.com/go-gota/gota/series"
 )
 
 type CSVReaderConfig struct {
@@ -95,4 +96,31 @@ func ReadCsvWithDataFrame(filePath string, config *CSVReaderConfig) (*dataframe.
 	irisDF := dataframe.ReadCSV(irisFile)
 
 	return &irisDF, nil
+}
+
+// / This filter takes a dataframe and a threshold value and returns
+// / only the rows where the sum of the of the SepalLength column and the SepalWidth column is greater than the threshold.
+func DataFrameFilterByThreshold(threshold float32, df *dataframe.DataFrame) dataframe.DataFrame {
+	// transform the dataframe to a new one
+	newDf := df.Rapply(func(ser series.Series) series.Series {
+		newSeries := ser.Slice(0, ser.Len()-1)
+		sum := func(arr []float64) float64 {
+			var total float64
+			for _, v := range arr {
+				total += v
+			}
+			return total
+		}(newSeries.Float())
+		if sum >= float64(threshold) {
+			return ser
+		}
+		ser.Set([]int{0}, series.New([]string{"0"}, series.Float, "temp-series"))
+		return ser
+	})
+	// Filter the dataframe
+	return newDf.Filter(dataframe.F{
+		Colidx:     0,
+		Comparator: "==",
+		Comparando: "0.0", // not the cleanest way to do this but it works ans Sepal length is always positive
+	})
 }

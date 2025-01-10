@@ -1,7 +1,6 @@
 package csv_test
 
 import (
-	"fmt"
 	"os"
 	"path"
 	"testing"
@@ -38,6 +37,10 @@ func TestCSVReadDataFrame(t *testing.T) {
 
 	fileData, err := csv.ReadCsvWithDataFrame(path.Join(fp, "../", "../", "testdata", "csv", "iris", "iris.data"), &csv.CSVReaderConfig{FieldsPerRecord: 5})
 	require.NoError(t, err)
+	require.GreaterOrEqual(t, fileData.Nrow(), 1)
 
-	fmt.Println(fileData)
+	// test filtering by sepal length
+	filteredData := csv.DataFrameFilterByThreshold(9, fileData)
+	require.GreaterOrEqual(t, filteredData.Nrow(), 1)
+	t.Logf("Filtered data by threshold: %v", filteredData)
 }
