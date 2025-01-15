@@ -20,8 +20,8 @@ func ReadFromDb() {
 	if pgURL == "" {
 		log.Fatal("PGURL empty")
 	}
-	// Open a database value. Specify the postgres driver
-	// for databases/sql.
+	// Open a database value.
+	// Specify the postgres driver for databases/sql.
 	db, err := sql.Open("postgres", pgURL)
 	if err != nil {
 		log.Fatal(err)
