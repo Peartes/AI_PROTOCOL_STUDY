@@ -1,4 +1,4 @@
-package stockbroker
+package main
 
 import (
 	"math/rand"
