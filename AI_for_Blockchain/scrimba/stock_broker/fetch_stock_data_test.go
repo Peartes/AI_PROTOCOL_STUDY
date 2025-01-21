@@ -8,7 +8,7 @@ import (
 )
 
 func TestFetchStockData(t *testing.T) {
-	tickers := []string{"AAPL", "GOOGL", "MSFT"}
+	tickers := []string{"AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"}
 
 	channel, err := broker.FetchStockData(tickers)
 
