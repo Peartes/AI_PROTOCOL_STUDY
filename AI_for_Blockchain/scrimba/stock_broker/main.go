@@ -26,7 +26,7 @@ func chatMessage(role openai.ChatCompletionMessageParamRole, content string) ope
 
 func main() {
 	res, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model: openai.String(openai.ChatModelGPT4_0613),
+		Model: openai.String(openai.ChatModelGPT3_5Turbo),
 		Messages: openai.Raw[[]openai.ChatCompletionMessageParamUnion]([]openai.ChatCompletionMessageParamUnion{
 			chatMessage(openai.ChatCompletionMessageParamRoleSystem, "You are a helpful general knowledge expert."),
 			chatMessage(openai.ChatCompletionMessageParamRoleUser, "What is the capital of the United States?"),
