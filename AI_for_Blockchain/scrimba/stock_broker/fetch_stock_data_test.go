@@ -15,7 +15,7 @@ func TestFetchStockData(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 
-	var stockData []broker.StockData
+	var stockData []broker.PolygonAPIStockData
 	for data := <-channel; data != nil; data = <-channel {
 		stockData = append(stockData, *data)
 	}

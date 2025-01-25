@@ -25,3 +25,7 @@ func GetOpenAIOrganization() string {
 func GetOpenAIProject() string {
 	return os.Getenv("OPENAI_PROJECT")
 }
+
+func GetPolygonAPIKey() string {
+	return os.Getenv("POLYGON_API_KEY")
+}
