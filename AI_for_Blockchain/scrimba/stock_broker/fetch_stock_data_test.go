@@ -20,4 +20,5 @@ func TestFetchStockData(t *testing.T) {
 		stockData = append(stockData, *data)
 	}
 	require.Equal(t, len(tickers), len(stockData))
+	t.Logf("Stock data fetched for %d tickers %v", len(stockData), stockData)
 }
