@@ -20,12 +20,12 @@ func init() {
 func RunApp(prompt string) error {
 	res, err := client.Images.Generate(ctx, openai.ImageGenerateParams{
 		Prompt:         openai.String(prompt),
-		Model:          openai.String(openai.ImageModelDallE3),
+		Model:          openai.String(openai.ImageModelDallE2),
 		N:              openai.Int(1),
-		ResponseFormat: openai.Raw[openai.ImageGenerateParamsResponseFormat](openai.ImageGenerateParamsResponseFormatURL),
+		ResponseFormat: openai.Raw[openai.ImageGenerateParamsResponseFormat](openai.ImageGenerateParamsResponseFormatB64JSON),
 		Quality:        openai.Raw[openai.ImageGenerateParamsQuality](openai.ImageGenerateParamsQualityStandard),
-		Size:           openai.Raw[openai.ImageGenerateParamsSize](openai.ImageGenerateParamsSize1024x1024),
-		Style:          openai.Raw[openai.ImageGenerateParamsStyle](openai.ImageGenerateParamsStyleVivid),
+		Size:           openai.Raw[openai.ImageGenerateParamsSize](openai.ImageGenerateParamsSize256x256),
+		Style:          openai.Raw[openai.ImageGenerateParamsStyle](openai.ImageGenerateParamsStyleNatural),
 	})
 	if err != nil {
 		return fmt.Errorf("error while asking model for image generation %w ", err)
