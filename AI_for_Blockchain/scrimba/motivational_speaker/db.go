@@ -7,17 +7,21 @@ import (
 	"sync"
 )
 
+type JsonTypes interface {
+	string | int | float64 | bool | interface{}
+}
+
 // MemStore represents an in-memory key-value store with file persistence
-type MemStore struct {
+type MemStore[V JsonTypes] struct {
 	mu       sync.RWMutex
-	data     map[string]string
+	data     map[string]map[string]V
 	filePath string
 }
 
 // NewMemStore initializes a new MemStore, loading data from the local file if available
-func NewMemStore(filePath string) *MemStore {
-	store := &MemStore{
-		data:     make(map[string]string),
+func NewMemStore[V JsonTypes](filePath string) *MemStore[V] {
+	store := &MemStore[V]{
+		data:     make(map[string]map[string]V),
 		filePath: filePath,
 	}
 
@@ -26,43 +30,55 @@ func NewMemStore(filePath string) *MemStore {
 	return store
 }
 
-// Set adds or updates a key-value pair
-func (m *MemStore) Set(key, value string) {
+// Set adds or updates a key-value pair to a table
+func (m *MemStore[V]) Set(key string, value V, table string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.data[key] = value
+	if _, tableExists := m.data[table]; !tableExists {
+		m.data[table] = make(map[string]V)
+	}
+	m.data[table][key] = value
 	m.saveToFile()
 }
 
 // Get retrieves a value by key
-func (m *MemStore) Get(key string) (string, bool) {
+func (m *MemStore[V]) Get(key, table string) (*V, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	val, exists := m.data[key]
-	return val, exists
+	if _, tableExists := m.data[table]; !tableExists {
+		return nil, false
+	}
+	val, exists := m.data[table][key]
+	return &val, exists
 }
 
 // Delete removes a key from the store
-func (m *MemStore) Delete(key string) {
+func (m *MemStore[V]) Delete(key, table string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.data, key)
+	if _, tableExists := m.data[table]; !tableExists {
+		return
+	}
+	delete(m.data[table], key)
 	m.saveToFile()
 }
 
 // List returns all key-value pairs
-func (m *MemStore) List() map[string]string {
+func (m *MemStore[V]) List(table string) map[string]V {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	copyData := make(map[string]string)
-	for k, v := range m.data {
+	if _, tableExists := m.data[table]; !tableExists {
+		return map[string]V{}
+	}
+	copyData := make(map[string]V)
+	for k, v := range m.data[table] {
 		copyData[k] = v
 	}
 	return copyData
 }
 
 // saveToFile persists data to the local file system
-func (m *MemStore) saveToFile() {
+func (m *MemStore[V]) saveToFile() {
 	dataJSON, err := json.MarshalIndent(m.data, "", "  ")
 	if err != nil {
 		fmt.Println("Error saving data:", err)
@@ -75,7 +91,7 @@ func (m *MemStore) saveToFile() {
 }
 
 // loadFromFile loads data from the local file system
-func (m *MemStore) loadFromFile() {
+func (m *MemStore[V]) loadFromFile() {
 	if _, err := os.Stat(m.filePath); os.IsNotExist(err) {
 		return // File doesn't exist, start with empty data
 	}

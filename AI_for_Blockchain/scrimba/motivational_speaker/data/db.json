@@ -1,3 +1,8 @@
 {
-  "7507d68d4a768c7d18e3b866ab0f0a2a7b4d5d78c9fe12841c1eade1f41a8f56": "file-XQCxQMg2D47shwKFSgUygK"
+  "fine_tuned_models": {
+    "7507d68d4a768c7d18e3b866ab0f0a2a7b4d5d78c9fe12841c1eade1f41a8f56": "ftjob-PQwmFgpSa2OfnYPvAtQqPHd6"
+  },
+  "uploads": {
+    "7507d68d4a768c7d18e3b866ab0f0a2a7b4d5d78c9fe12841c1eade1f41a8f56": "file-LVe3QP6TrZ5RBgA848pTob"
+  }
 }

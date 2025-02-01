@@ -15,12 +15,12 @@ import (
 
 var client openai.Client
 var ctx context.Context
-var db *MemStore
+var db *MemStore[JsonTypes]
 
 func init() {
 	client = *openai.NewClient(openoptions.WithAPIKey(config.GetOpenAIKey()), openoptions.WithOrganization(config.GetOpenAIOrganization()), openoptions.WithProject(config.GetOpenAIProject()))
 	ctx = context.Background()
-	db = NewMemStore("data/db.json")
+	db = NewMemStore[JsonTypes]("data/db.json")
 }
 
 // / RunApp runs the application
@@ -28,50 +28,113 @@ func init() {
 // / fileName is the name of the file to upload. Must be a jsonl file and in the data directory
 // / It returns an error if any
 func RunApp(filename string) error {
-	isUploaded, fd, err := GetFileUploadFD(filename)
+	fd, err := GetFileUploadFD(filename)
 	if err != nil {
 		return fmt.Errorf("error while getting file upload descriptor %w ", err)
 	}
-	if !isUploaded {
-		return fmt.Errorf("error while uploading file %w ", err)
+	fmt.Println("File uploaded successfully with id: ", fd)
+
+	modelId, err := GetFineTunedModel(filename, openai.FineTuningJobNewParamsModelGPT3_5Turbo)
+	if err != nil {
+		return fmt.Errorf("error while checking if fine tuned model exists %w ", err)
 	}
-	fmt.Println("File uploaded successfully with file descriptor: ", fd)
+	fmt.Println("Fine tuned model already exists with id: ", modelId)
 	return nil
+}
+
+/*
+This function creates a fine tuned model with a particular doc
+Returns the (model id, error if any)
+*/
+func GetFineTunedModel(trainingFile string, model openai.FineTuningJobNewParamsModel) (string, error) {
+	fd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("error while getting working directory %w ", err)
+	}
+	file, err := os.OpenFile(path.Join(fd, "data", trainingFile), os.O_RDONLY, 0644)
+	if err != nil {
+		return "", fmt.Errorf("error while opening file %w ", err)
+	}
+	defer file.Close()
+
+	checksum, err := createChecksum(file)
+	if err != nil {
+		return "", fmt.Errorf("error while creating checksum %w ", err)
+	}
+
+	f, exist := db.Get(checksum, "fine_tuned_models")
+
+	if exist {
+		res, ok := (*f).(string)
+		if ok {
+			return res, nil
+		}
+		return "", fmt.Errorf("error while getting fine tuned model from db %w ", err)
+	} else {
+		fd, err := GetFileUploadFD(trainingFile)
+		if err != nil {
+			return "", fmt.Errorf("error while getting file upload descriptor %w ", err)
+		}
+		modelId, err := CreateFineTunedModel(openai.FineTuningJobNewParams{
+			Model:        openai.Raw[openai.FineTuningJobNewParamsModel](openai.FineTuningJobNewParamsModelGPT3_5Turbo),
+			TrainingFile: openai.String(fd),
+			Suffix:       openai.String("motivational_speaker"),
+		})
+		if err != nil {
+			return "", fmt.Errorf("error while creating a new fine tuned model %w ", err)
+		}
+		db.Set(checksum, modelId, "fine_tuned_models")
+		return modelId, nil
+	}
+}
+
+/*
+This function checks if there exists a finetuned model trained with a particular doc
+Returns the (model id, error if any)
+*/
+func CreateFineTunedModel(opts openai.FineTuningJobNewParams) (string, error) {
+	fineTune, err := client.FineTuning.Jobs.New(ctx, opts)
+	if err != nil {
+		return "", fmt.Errorf("error while creating fine tuning job %w ", err)
+	}
+	return fineTune.ID, nil
 }
 
 /*
 This function checks if a file has been uploaded to an openai organization before.
 It returns a (isUploaded, file upload descriptor, error if any)
 */
-func GetFileUploadFD(filename string) (bool, string, error) {
+func GetFileUploadFD(filename string) (string, error) {
 	fd, err := os.Getwd()
 	if err != nil {
-		return false, "", fmt.Errorf("error while getting working directory %w ", err)
+		return "", fmt.Errorf("error while getting working directory %w ", err)
 	}
 	file, err := os.OpenFile(path.Join(fd, "data", filename), os.O_RDONLY, 0644)
 	if err != nil {
-		return false, "", fmt.Errorf("error while opening file %w ", err)
+		return "", fmt.Errorf("error while opening file %w ", err)
 	}
 	defer file.Close()
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return false, "", fmt.Errorf("error while hashing file %w ", err)
+
+	checksum, err := createChecksum(file)
+	if err != nil {
+		return "", fmt.Errorf("error while creating checksum %w ", err)
 	}
 
-	data := hasher.Sum([]byte("file"))
+	f, exist := db.Get(checksum, "uploads")
 
-	checksum := fmt.Sprintf("%x", sha256.Sum256(data))
-
-	f, exist := db.Get(checksum)
 	if exist {
-		return true, f, nil
+		res, ok := (*f).(string)
+		if ok {
+			return res, nil
+		}
+		return "", fmt.Errorf("error while getting file upload descriptor from db %w ", err)
 	} else {
 		fd, err := uploadFileToOpenAI(file)
 		if err != nil {
-			return false, "", fmt.Errorf("error while uploading file %w ", err)
+			return "", fmt.Errorf("error while uploading file %w ", err)
 		}
-		db.Set(checksum, fd)
-		return true, fd, nil
+		db.Set(checksum, fd, "uploads")
+		return fd, nil
 	}
 }
 
@@ -94,4 +157,15 @@ func uploadFileToOpenAI(file *os.File) (string, error) {
 		return "", fmt.Errorf("error while uploading file %w ", err)
 	}
 	return uploadFD.ID, nil
+}
+
+func createChecksum(file *os.File) (string, error) {
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", fmt.Errorf("error while hashing file %w ", err)
+	}
+
+	data := hasher.Sum([]byte("file"))
+
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
