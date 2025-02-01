@@ -1,8 +1,12 @@
 {
   "fine_tuned_models": {
-    "7507d68d4a768c7d18e3b866ab0f0a2a7b4d5d78c9fe12841c1eade1f41a8f56": "ftjob-PQwmFgpSa2OfnYPvAtQqPHd6"
+    "7507d68d4a768c7d18e3b866ab0f0a2a7b4d5d78c9fe12841c1eade1f41a8f56": {
+      "job_status": "succeeded",
+      "model_id": "ftjob-f5w5mAkyhojlWMFsPUUMjJep",
+      "model_name": "ft:gpt-3.5-turbo-0125:personal:motivational-speaker:Aw9Q1N36"
+    }
   },
   "uploads": {
-    "7507d68d4a768c7d18e3b866ab0f0a2a7b4d5d78c9fe12841c1eade1f41a8f56": "file-LVe3QP6TrZ5RBgA848pTob"
+    "7507d68d4a768c7d18e3b866ab0f0a2a7b4d5d78c9fe12841c1eade1f41a8f56": "file-LN5XRShwFnuCFyAFWuFU6L"
   }
 }
