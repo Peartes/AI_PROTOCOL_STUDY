@@ -26,20 +26,26 @@ func init() {
 
 // / RunApp runs the application
 // / It uploads the fine tune data file to the openai server
-// / fileName is the name of the file to upload. Must be a jsonl file and in the data directory
+// / trainingFile is the name of the file to use to fine tune our motivational ai. Must be a jsonl file and in the data directory
 // / It returns an error if any
-func RunApp(filename string) error {
-	fd, err := GetFileUploadFD(filename)
-	if err != nil {
-		return fmt.Errorf("error while getting file upload descriptor %w ", err)
-	}
-	fmt.Println("File uploaded successfully with id: ", fd)
-
-	model, err := GetFineTunedModel(filename, openai.FineTuningJobNewParamsModelGPT3_5Turbo)
+func RunApp(trainingFile, prompt string) error {
+	model, err := GetFineTunedModel(trainingFile, openai.FineTuningJobNewParamsModelGPT3_5Turbo)
 	if err != nil {
 		return fmt.Errorf("error while checking if fine tuned model exists %w ", err)
 	}
 	fmt.Printf("Model status: %s \nModel id: %s \nModel name: %s\n", model.JobStatus, model.ModelId, model.ModelName)
+
+	res, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model: openai.String(model.ModelName),
+		Messages: openai.Raw[[]openai.ChatCompletionMessageParamUnion]([]openai.ChatCompletionMessageParamUnion{
+			ChatMessage(openai.ChatCompletionMessageParamRoleUser, prompt),
+		}),
+	})
+	if err != nil {
+		fmt.Println(fmt.Errorf("error while asking model for chat completion %w ", err))
+	} else {
+		fmt.Printf("%s: %s \n", res.Choices[0].Message.Role, res.Choices[0].Message.Content)
+	}
 	return nil
 }
 
