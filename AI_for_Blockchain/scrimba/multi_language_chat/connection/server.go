@@ -6,17 +6,16 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
+
+	ai "github.com/peartes/scrimba/pollyglot/ai"
 )
 
-var Language string // Language of the client you're chatting with
-
-func Server(path string) error {
+func Server(path, targetLanguage string) error {
 	// Start listening on a TCP port
 	listener, err := net.Listen("unix", path)
 	if err != nil {
-		return Client(path)
+		return Client(path, targetLanguage)
 	}
 	defer listener.Close()
 	fmt.Println("Server started on unix file: ", path)
@@ -31,11 +30,11 @@ func Server(path string) error {
 		fmt.Println("New client connected")
 
 		// Handle each client in a new goroutine
-		go handleConnection(conn)
+		go handleConnection(conn, targetLanguage)
 	}
 }
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, targetLanguage string) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
@@ -53,11 +52,12 @@ func handleConnection(conn net.Conn) {
 			fmt.Println("Client disconnected.")
 			return
 		}
-		if strings.HasPrefix(message, "/language") {
-			Language = strings.TrimSpace(strings.TrimPrefix(message, "/language"))
+		res, err := ai.Translate(message, targetLanguage)
+		if err != nil {
+			fmt.Println("Error translating message:", err)
 			continue
 		}
-		fmt.Printf("Client: %s", message)
+		fmt.Printf("Client: %s\n", res)
 	}
 
 }

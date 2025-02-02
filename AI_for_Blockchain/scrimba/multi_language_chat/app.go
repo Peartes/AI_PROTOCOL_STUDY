@@ -6,11 +6,11 @@ import (
 	"github.com/peartes/scrimba/pollyglot/connection"
 )
 
-func RunApp(path string) error {
+func RunApp(path, targetLanguage string) error {
 	fs, _ := os.Stat(path)
 	if fs != nil {
-		return connection.Client(path)
+		return connection.Client(path, targetLanguage)
 	} else {
-		return connection.Server(path)
+		return connection.Server(path, targetLanguage)
 	}
 }
