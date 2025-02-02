@@ -7,13 +7,15 @@ import (
 )
 
 var buddy string
+var Language string
 
 func init() {
-	if len(os.Args) != 2 {
-		fmt.Println("Usage: go run main.go <username_to_chat_with>")
+	if len(os.Args) != 3 {
+		fmt.Println("Usage: go run main.go <username_to_chat_with> <your_language>")
 		os.Exit(1)
 	}
 	buddy = strings.Join([]string{"/tmp/", os.Args[1], ".sock"}, "")
+	Language = os.Args[2]
 }
 
 func main() {

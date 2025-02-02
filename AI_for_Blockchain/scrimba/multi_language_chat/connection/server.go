@@ -1,4 +1,4 @@
-package main
+package connection
 
 import (
 	"bufio"
@@ -6,8 +6,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
+
+var Language string // Language of the client you're chatting with
 
 func Server(path string) error {
 	// Start listening on a TCP port
@@ -23,7 +26,6 @@ func Server(path string) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection:", err)
 			continue
 		}
 		fmt.Println("New client connected")
@@ -50,6 +52,10 @@ func handleConnection(conn net.Conn) {
 		if err != nil {
 			fmt.Println("Client disconnected.")
 			return
+		}
+		if strings.HasPrefix(message, "/language") {
+			Language = strings.TrimSpace(strings.TrimPrefix(message, "/language"))
+			continue
 		}
 		fmt.Printf("Client: %s", message)
 	}

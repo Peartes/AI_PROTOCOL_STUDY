@@ -1,10 +1,11 @@
-package main
+package connection
 
 import (
 	"bufio"
 	"fmt"
 	"net"
 	"os"
+	"strings"
 )
 
 func Client(path string) error {
@@ -35,6 +36,10 @@ func receiveMessages(conn net.Conn) {
 		if err != nil {
 			fmt.Printf("Disconnected from server because of: %v\n", err)
 			os.Exit(0)
+		}
+		if strings.HasPrefix(message, "/language") {
+			Language = strings.TrimSpace(strings.TrimPrefix(message, "/language"))
+			continue
 		}
 		fmt.Printf("Server: %s", message)
 	}

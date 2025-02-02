@@ -1,12 +1,16 @@
 package main
 
-import "os"
+import (
+	"os"
+
+	"github.com/peartes/scrimba/pollyglot/connection"
+)
 
 func RunApp(path string) error {
 	fs, _ := os.Stat(path)
 	if fs != nil {
-		return Client(path)
+		return connection.Client(path)
 	} else {
-		return Server(path)
+		return connection.Server(path)
 	}
 }
