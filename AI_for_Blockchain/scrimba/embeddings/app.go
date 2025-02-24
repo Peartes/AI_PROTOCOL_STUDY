@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/internal/param"
 	openoptions "github.com/openai/openai-go/option"
 	"github.com/peartes/scrimba/embeddings/config"
 )
@@ -20,9 +19,10 @@ func init() {
 
 func RunApp() error {
 	res, err := client.Embeddings.New(ctx, openai.EmbeddingNewParams{
-		Input: param.Field[openai.EmbeddingNewParamsInputUnion]("dsvsf"),
-		Model: param.Field[openai.EmbeddingModel](openai.EmbeddingModelTextEmbeddingAda002),
+		Input: openai.Raw[openai.EmbeddingNewParamsInputUnion]("Hello World!"),
+		Model: openai.Raw[openai.EmbeddingModel](openai.EmbeddingModelTextEmbeddingAda002),
 	})
+	fmt.Printf("res: %v", res)
 	if err != nil {
 		return fmt.Errorf("error calling embeddings endpoint %v ", err)
 	}
