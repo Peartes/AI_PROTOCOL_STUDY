@@ -10,7 +10,7 @@ import (
 func init() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Fatalf("Error loading .env file %v", err)
 	}
 }
 
@@ -32,4 +32,8 @@ func GetSupaBaseUrl() string {
 
 func GetSupaBaseAPIKey() string {
 	return os.Getenv("SUPABASE_API_KEY")
+}
+
+func GetPodcastMockup() []string {
+	return PodcastMockup
 }
