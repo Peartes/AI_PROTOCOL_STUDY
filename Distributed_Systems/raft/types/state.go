@@ -1,11 +1,19 @@
 package types
 
+type serverKey int
+type contextKey string
+
+const (
+	NodeKey    serverKey  = 1
+	ContextKey contextKey = "key"
+)
+
 type State struct {
 	// persistent state on each server
 	ServerId    int
 	CurrentTerm int
 	VotedFor    int
-	Log         []string
+	Log         []Log
 
 	// volatile state on each server
 	CommitIndex int
@@ -16,11 +24,17 @@ type State struct {
 	MatchIndex []int
 }
 
-func NewState() *State {
+type Log struct {
+	Command string
+	Term    int
+}
+
+func NewState(serverId int) *State {
 	return &State{
-		CurrentTerm: 0,
-		VotedFor:    -1,
-		Log:         []string{},
+		ServerId:    serverId,
+		CurrentTerm: 1,
+		VotedFor:    serverId,
+		Log:         []Log{{Command: "", Term: 0}},
 		CommitIndex: 0,
 		LastApplied: 0,
 		NextIndex:   []int{},
@@ -37,7 +51,7 @@ func (s *State) GetLastLogIndex() int {
 }
 
 func (s *State) GetLastLogTerm() int {
-	return len(s.Log)
+	return s.Log[s.GetLastLogIndex()].Term
 }
 
 func (s *State) GetCommitIndex() int {
@@ -49,7 +63,6 @@ func (s *State) GetLastApplied() int {
 }
 
 func (s *State) GetNextIndex() []int {
-
 	return s.NextIndex
 }
 
@@ -89,23 +102,23 @@ func (s *State) SetMatchIndex(matchIndex []int) {
 	s.MatchIndex = matchIndex
 }
 
-func (s *State) SetLog(log []string) {
+func (s *State) SetLog(log []Log) {
 	s.Log = log
 }
 
-func (s *State) AppendLog(log string) {
+func (s *State) AppendLog(log Log) {
 	s.Log = append(s.Log, log)
 }
 
-func (s *State) GetLog() []string {
+func (s *State) GetLog() []Log {
 	return s.Log
 }
 
-func (s *State) GetLogEntry(index int) string {
+func (s *State) GetLogEntry(index int) Log {
 	return s.Log[index]
 }
 
-func (s *State) GetLogEntries(startIndex int) []string {
+func (s *State) GetLogEntries(startIndex int) []Log {
 	return s.Log[startIndex:]
 }
 

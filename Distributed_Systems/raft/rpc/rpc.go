@@ -7,12 +7,6 @@ import (
 	"github.com/peartes/distr_system/raft/types"
 )
 
-type key int
-
-const (
-	nodeKey key = 1
-)
-
 type RaftServer struct {
 	types.UnimplementedRaftServerServer
 }
@@ -20,7 +14,7 @@ type RaftServer struct {
 var _ types.RaftServerServer = &RaftServer{}
 
 func (r *RaftServer) RequestVote(ctx context.Context, payload *types.RequestVoteRequest) (*types.RequestVoteResponse, error) {
-	currState := ctx.Value(nodeKey).(*types.State)
+	currState := ctx.Value(types.NodeKey).(*types.State)
 
 	if currState == nil {
 		panic("can not read node state")
