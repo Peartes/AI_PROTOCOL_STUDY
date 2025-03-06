@@ -2,6 +2,7 @@ package types
 
 type State struct {
 	// persistent state on each server
+	ServerId    int
 	CurrentTerm int
 	VotedFor    int
 	Log         []string
@@ -25,6 +26,10 @@ func NewState() *State {
 		NextIndex:   []int{},
 		MatchIndex:  []int{},
 	}
+}
+
+func (s *State) GetServerId() int {
+	return s.ServerId
 }
 
 func (s *State) GetLastLogIndex() int {
