@@ -3,14 +3,20 @@ package types
 type serverKey int
 type contextKey string
 
+type NodeState int
+
 const (
 	NodeKey    serverKey  = 1
 	ContextKey contextKey = "key"
+	Follower   NodeState  = iota
+	Candidate
+	Leader
 )
 
 type State struct {
 	// persistent state on each server
 	ServerId    int
+	state       NodeState
 	CurrentTerm int
 	VotedFor    int
 	Log         []Log
@@ -32,6 +38,7 @@ type Log struct {
 func NewState(serverId int) *State {
 	return &State{
 		ServerId:    serverId,
+		state:       Candidate,
 		CurrentTerm: 1,
 		VotedFor:    serverId,
 		Log:         []Log{{Command: "", Term: 0}},
@@ -44,6 +51,14 @@ func NewState(serverId int) *State {
 
 func (s *State) GetServerId() int {
 	return s.ServerId
+}
+
+func (s *State) GetState() NodeState {
+	return s.state
+}
+
+func (s *State) SetState(state NodeState) {
+	s.state = state
 }
 
 func (s *State) GetLastLogIndex() int {
