@@ -44,7 +44,7 @@ func TestRequestVote(t *testing.T) {
 			Response: nil,
 			serverState: func() *types.State {
 				state := types.NewState(1)
-				state.SetCurrentTerm(2)
+				state.SetCurrentTerm(3)
 
 				return state
 			},
