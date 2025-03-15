@@ -1,20 +1,17 @@
 package rpc
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/peartes/distr_system/raft/types"
 )
 
 type RaftServer struct {
-	types.UnimplementedRaftServerServer
+	State *types.State
 }
 
-var _ types.RaftServerServer = &RaftServer{}
-
-func (r *RaftServer) RequestVote(ctx context.Context, payload *types.RequestVoteRequest) (*types.RequestVoteResponse, error) {
-	currState := ctx.Value(types.NodeKey).(*types.State)
+func (r *RaftServer) RequestVote(payload *types.RequestVoteRequest, res *types.RequestVoteResponse) {
+	currState := r.State
 
 	if currState == nil {
 		panic("can not read node state")
@@ -24,22 +21,26 @@ func (r *RaftServer) RequestVote(ctx context.Context, payload *types.RequestVote
 	logIndex := int32(currState.GetLastLogIndex())
 	logTerm := int32(currState.GetLastLogTerm())
 	if payload.Term < currTerm {
-		return nil, fmt.Errorf("candidate term %d is lower than server term %d", payload.Term, currState.CurrentTerm)
+		fmt.Printf("candidate term %d is lower than server term %d \n", payload.Term, currState.CurrentTerm)
+		res.Term = currTerm
+		res.VoteGranted = false
+		return
 	}
 
 	votedFor := currState.GetVotedFor()
-	if votedFor == currState.GetServerId() || votedFor == int(payload.CandidateId) {
+	if votedFor == currState.GetServerId() {
 		if payload.LastLogIndex >= logIndex && payload.LastLogTerm >= logTerm {
-			return &types.RequestVoteResponse{
-				Term:        currTerm,
-				VoteGranted: true,
-			}, nil
+			currState.SetVotedFor(int(payload.CandidateId))
+			res.Term = currTerm
+			res.VoteGranted = true
 		} else {
-			return nil, fmt.Errorf("candidate log term %d and index %d is not as up to date as server log term %d and index %d", payload.LastLogTerm, payload.LastLogIndex, logTerm, logIndex)
+			fmt.Printf("candidate %d log term %d and index %d is not as up to date as server log term %d and index %d \n", payload.CandidateId, payload.LastLogTerm, payload.LastLogIndex, logTerm, logIndex)
+			res.Term = currTerm
+			res.VoteGranted = false
 		}
+	} else {
+		fmt.Printf("server already voted for candidate %d \n", votedFor)
+		res.Term = currTerm
+		res.VoteGranted = false
 	}
-	return &types.RequestVoteResponse{
-		Term:        currTerm,
-		VoteGranted: false,
-	}, nil
 }

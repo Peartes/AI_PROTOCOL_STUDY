@@ -1,8 +1,6 @@
 package rpc_test
 
 import (
-	"context"
-	"fmt"
 	"testing"
 
 	"github.com/peartes/distr_system/raft/rpc"
@@ -13,9 +11,8 @@ import (
 func TestRequestVote(t *testing.T) {
 	scenarios := []struct {
 		Request     *types.RequestVoteRequest
-		err         error
 		Response    *types.RequestVoteResponse
-		serverState func() *types.State
+		serverState func() *rpc.RaftServer
 	}{
 		{
 			// initial request with all servers just starting up
@@ -23,14 +20,13 @@ func TestRequestVote(t *testing.T) {
 				Term:         1,
 				CandidateId:  2,
 				LastLogIndex: 0,
-				LastLogTerm:  0,
+				LastLogTerm:  1,
 			},
-			err: nil,
 			Response: &types.RequestVoteResponse{
 				Term:        1,
 				VoteGranted: true,
 			},
-			serverState: func() *types.State { return types.NewState(1) },
+			serverState: func() *rpc.RaftServer { return &rpc.RaftServer{State: types.NewState(1)} },
 		},
 		{
 			// stale candidate term
@@ -40,13 +36,15 @@ func TestRequestVote(t *testing.T) {
 				LastLogIndex: 1,
 				LastLogTerm:  1,
 			},
-			err:      fmt.Errorf("candidate term %d is lower than server term %d", 1, 2),
-			Response: nil,
-			serverState: func() *types.State {
+			Response: &types.RequestVoteResponse{
+				Term:        3,
+				VoteGranted: false,
+			},
+			serverState: func() *rpc.RaftServer {
 				state := types.NewState(1)
 				state.SetCurrentTerm(3)
 
-				return state
+				return &rpc.RaftServer{State: state}
 			},
 		},
 		{
@@ -54,16 +52,18 @@ func TestRequestVote(t *testing.T) {
 			Request: &types.RequestVoteRequest{
 				Term:         1,
 				CandidateId:  2,
-				LastLogIndex: 1,
+				LastLogIndex: 0,
 				LastLogTerm:  1,
 			},
-			err:      fmt.Errorf("candidate log term %d and index %d is not as up to date as server log term %d and index %d", 1, 1, 1, 2),
-			Response: nil,
-			serverState: func() *types.State {
+			Response: &types.RequestVoteResponse{
+				Term:        1,
+				VoteGranted: false,
+			},
+			serverState: func() *rpc.RaftServer {
 				state := types.NewState(1)
 				state.SetLog([]types.Log{{Command: "", Term: 1}, {Command: "", Term: 1}})
 
-				return state
+				return &rpc.RaftServer{State: state}
 			},
 		},
 		{
@@ -74,14 +74,16 @@ func TestRequestVote(t *testing.T) {
 				LastLogIndex: 1,
 				LastLogTerm:  1,
 			},
-			err:      fmt.Errorf("candidate log term %d and index %d is not as up to date as server log term %d and index %d", 1, 1, 1, 2),
-			Response: nil,
-			serverState: func() *types.State {
+			Response: &types.RequestVoteResponse{
+				Term:        2,
+				VoteGranted: false,
+			},
+			serverState: func() *rpc.RaftServer {
 				state := types.NewState(1)
 				state.SetCurrentTerm(2)
 				state.SetLog([]types.Log{{Command: "", Term: 1}, {Command: "", Term: 2}})
 
-				return state
+				return &rpc.RaftServer{State: state}
 			},
 		},
 		{
@@ -92,35 +94,24 @@ func TestRequestVote(t *testing.T) {
 				LastLogIndex: 1,
 				LastLogTerm:  1,
 			},
-			err: nil,
 			Response: &types.RequestVoteResponse{
 				Term:        1,
 				VoteGranted: false,
 			},
-			serverState: func() *types.State {
+			serverState: func() *rpc.RaftServer {
 				state := types.NewState(1)
 				state.SetVotedFor(3)
 
-				return state
+				return &rpc.RaftServer{State: state}
 			},
 		},
 	}
 
-	server := rpc.RaftServer{
-		types.UnimplementedRaftServerServer{},
-	}
-
 	for _, tt := range scenarios {
 		t.Run("should request vote", func(t *testing.T) {
-			ctx := context.WithValue(context.Background(), types.NodeKey, tt.serverState())
-
-			res, err := server.RequestVote(ctx, tt.Request)
-
-			if tt.err != nil {
-				require.Error(t, tt.err, err)
-			} else {
-				require.EqualValues(t, &tt.Response, &res)
-			}
+			res := &types.RequestVoteResponse{}
+			tt.serverState().RequestVote(tt.Request, res)
+			require.EqualValues(t, tt.Response, res)
 		})
 	}
 }

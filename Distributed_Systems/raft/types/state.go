@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 type serverKey int
 type contextKey string
 
@@ -30,6 +32,10 @@ type State struct {
 	MatchIndex []int
 }
 
+type Config struct {
+	ElectionTimeout time.Duration
+}
+
 type Log struct {
 	Command string
 	Term    int
@@ -41,7 +47,7 @@ func NewState(serverId int) *State {
 		state:       Candidate,
 		CurrentTerm: 1,
 		VotedFor:    serverId,
-		Log:         []Log{{Command: "", Term: 0}},
+		Log:         []Log{{Command: "", Term: 1}},
 		CommitIndex: 0,
 		LastApplied: 0,
 		NextIndex:   []int{},
