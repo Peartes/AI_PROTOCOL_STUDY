@@ -39,6 +39,17 @@ where
 // In this case, the compiler does does not know the concrete type of h, this is called type erasure
 // so the compiler will generate a fat pointer for the trait object, which contains the pointer to the concrete and the pointer to the vtable
 // the vtable contains the pointers to the functions that are implemented for the trait
+// vtable struct looks similar to this
+/*
+struct Vtable {
+    destructor: fn(*mut u8), // to free memory
+    size: usize, // size of the concrete type
+    align: usize,
+    drop_in_place: fn(*mut u8), // to drop the concrete type
+    hei: fn(*const u8),
+}
+*/
+// the vtable is created at compile time and is stored in the binary
 pub fn say_hei(h: Box<dyn Hei>) {
     h.hei();
 }
