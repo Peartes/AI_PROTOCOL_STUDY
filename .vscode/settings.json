@@ -1,5 +1,11 @@
 {
-    "rust-analyzer.linkedProjects": [
-        "Rust/Cargo.toml"
-    ]
+  "rust-analyzer.linkedProjects": ["Rust/Cargo.toml"],
+  "rust-analyzer.initializeStopped": false,
+  "rust-analyzer.checkOnSave": true,
+  "rust-analyzer.restartServerOnConfigChange": true,
+  "rust-analyzer.showSyntaxTree": false,
+  "rust-analyzer.diagnostics.styleLints.enable": true,
+  "rust-analyzer.inlayHints.closureCaptureHints.enable": true,
+  "rust-analyzer.inlayHints.genericParameterHints.lifetime.enable": false,
+  "rust-analyzer.interpret.tests": true
 }
