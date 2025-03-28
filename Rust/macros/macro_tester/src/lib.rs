@@ -1,4 +1,6 @@
-use proc_macros::{PrintIndent, print_fn_name_attr};
+mod macros;
+
+use proc_macros::{print_fn_name_attr, PrintIndent};
 
 pub trait PrintIndent {
     fn print_indent(&self);
@@ -10,11 +12,10 @@ pub struct Rectangle {
     pub height: u32,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[print_fn_name_attr]
     pub fn test() {
         println!("Hello, world!");
