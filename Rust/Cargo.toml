@@ -1,2 +1,2 @@
 [workspace]
-members = [ "closures","eksemple", "macros/*"]
+members = [ "closures","eksemple", "lifetime", "macros/*"]
