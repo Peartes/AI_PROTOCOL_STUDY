@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{fmt::Debug, io};
+use std::{fmt::Debug, io, marker::Tuple, vec};
 // I have thought of trait bounds as a way to specify the types that a generic can be.
 //     * For example, if we have a generic type T, we can specify that T must implement the trait Foo.
 //     * This means that T can be any type that implements the Foo trait.
@@ -82,8 +82,27 @@ trait TakeNext2: IntoIterator {}
 
 // another approach would be to use a blanket impl of the trait with a trait bound on the implementation
 trait TakeNext3 {}
-// we are saying that any item of type T that impl IntoIterator can be used as a TakeNext3
-impl<T> TakeNext3 for T where T: IntoIterator {}
+// we are saying that any item of type T that impl IntoIterator and FnOnce<Tuple> can be used as a TakeNext3
+impl<T: FnOnce(String, String) + IntoIterator> TakeNext3 for T {}
+
+impl IntoIterator for Garbage {
+    type Item = String;
+
+    type IntoIter = vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        todo!()
+    }
+}
+
+impl FnOnce<(String, String)> for Garbage {
+    type Output = (); // for object safety, the return type has to be a () i.e. the call does not return any value
+                      // the definition of the call method makes a reference to Self (Self::Output) which breaks object safety
+
+    extern "rust-call" fn call_once(self, _args: (String, String)) -> Self::Output {
+        ()
+    }
+}
 
 #[cfg(test)]
 mod test_trait_bound {
@@ -91,6 +110,6 @@ mod test_trait_bound {
 
     #[test]
     fn test_take_next() {
-        let _ty: &dyn TakeNext3 = &vec![1, 2, 3]; // works because Vec<T> impl IntoIterator
+        let _ty: &dyn TakeNext3 = &Garbage {}; // works because Vec<T> impl IntoIterator
     }
 }
