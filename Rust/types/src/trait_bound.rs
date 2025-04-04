@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{fmt::Debug, io, marker::Tuple, vec};
+use std::{fmt::Debug, io, vec};
 // I have thought of trait bounds as a way to specify the types that a generic can be.
 //     * For example, if we have a generic type T, we can specify that T must implement the trait Foo.
 //     * This means that T can be any type that implements the Foo trait.
@@ -86,12 +86,13 @@ trait TakeNext3 {}
 impl<T: FnOnce(String, String) + IntoIterator> TakeNext3 for T {}
 
 impl IntoIterator for Garbage {
-    type Item = String;
+    type Item = u32;
 
-    type IntoIter = vec::IntoIter<Self::Item>;
+    type IntoIter = impl Iterator<Item = u32>; // existential type, this means that the type is not known at compile time
+    // this is a type that impl Iterator and has an Item of type u32
 
     fn into_iter(self) -> Self::IntoIter {
-        todo!()
+        vec![1, 3].into_iter()
     }
 }
 

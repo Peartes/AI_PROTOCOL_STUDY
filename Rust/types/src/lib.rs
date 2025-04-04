@@ -1,4 +1,4 @@
-#![feature(unboxed_closures, fn_traits)]
+#![feature(unboxed_closures, fn_traits, impl_trait_in_assoc_type)]
 mod trait_bound; 
 // let's explore types in Rust
 // one important concept for how types are represented in memory using Rust is alignment
