@@ -1,3 +1,4 @@
+mod trait_bound; 
 // let's explore types in Rust
 // one important concept for how types are represented in memory using Rust is alignment
 // alignment is the requirement that data be stored in memory at addresses that are multiples of a certain value
