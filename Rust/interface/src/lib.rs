@@ -57,6 +57,10 @@ impl serde::Serialize for MyInterface {
     }
 }
 
+/// Rust does not auto impl traits for references to types that impl a trait. e.g. even though we impl 
+/// Serialize for MyInterface, we need to impl Serialize for &MyInterface. This is because some trait method
+/// might take ownership of the type or require an exclusive reference to the type.
+
 #[cfg(test)]
 mod tests {
     use super::*;
