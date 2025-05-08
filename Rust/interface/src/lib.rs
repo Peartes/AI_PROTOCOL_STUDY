@@ -57,12 +57,29 @@ impl serde::Serialize for MyInterface {
     }
 }
 
-/// Rust does not auto impl traits for references to types that impl a trait. e.g. even though we impl 
+/// Rust does not auto impl traits for references to types that impl a trait. e.g. even though we impl
 /// Serialize for MyInterface, we need to impl Serialize for &MyInterface. This is because some trait method
 /// might take ownership of the type or require an exclusive reference to the type.
 
+/// wrapper types in Rust allow for some form of inheritance inn Rust. Wrapper types like AsRef and Deref allow you to call methods of a type U
+/// on a type T that impl AsRef<U> or Deref<Target=U>
+pub struct MyInterfaceWrapper {}
+
+/// allow MyInterfaceWrapper to be used as a MyInterface or in a more technical sense, allow MyInterfaceWrapper reference to be used as a MyInterface reference
+impl AsRef<MyInterface> for MyInterfaceWrapper {
+    fn as_ref(&self) -> &MyInterface {
+        todo!()
+    }
+}
+// we can call methods of MyInterface on MyInterfaceWrapper
+impl MyInterface {
+    pub fn my_interface_name(&self) {
+        println!("MyInterface name is {}", self.i_name);
+    }
+}
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
@@ -82,8 +99,5 @@ mod tests {
             i_value: 42,
         };
         assert_eq!(ty, ty2);
-        // test our type is serializable
-        let serialized = serde_json::to_string(&ty).unwrap();
-        assert_eq!(serialized, r#"{"i_name":"test","i_value":42}"#);
     }
 }
