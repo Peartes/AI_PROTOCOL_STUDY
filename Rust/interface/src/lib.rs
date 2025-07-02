@@ -1,5 +1,5 @@
 use serde::ser::SerializeStruct;
-use std::fmt::Debug;
+use std::{borrow::Cow, fmt::Debug};
 
 /// proper interface definition in Rust should be unsurprising. Unsurprising means that
 /// things that are automatically intuitive should be. One way to achieve this
@@ -77,6 +77,136 @@ impl MyInterface {
         println!("MyInterface name is {}", self.i_name);
     }
 }
+
+mod flexible {
+    use super::*;
+    /*
+        FLEXIBLE INTERFACES
+
+        - Avoid restricting callers more than you must
+        - Accept generic arguments whenever reasonable
+          * This lets the caller give you the cheapest, simplest type they have
+          * Example: impl AsRef<str> instead of &str or String
+
+        - Return types can also be flexible
+          * Cow<'_, str> is a great way to let the implementation decide
+            if a value is borrowed or owned
+
+        - In function signatures:
+            fn do_stuff(s: String) -> String
+                - expects caller to allocate and you to allocate
+                - hard to evolve without breaking
+
+            fn do_stuff(s: &str) -> Cow<'_, str>
+                - caller can pass by ref
+                - you can return borrowed or owned
+                - easier to change later
+
+            fn do_stuff<T: AsRef<str>>(s: T) -> impl AsRef<str>
+                - even more flexible
+                - maximizes what can be passed and what can be returned
+
+        - This is critical because relaxing restrictions is backwards compatible,
+          but tightening them is a breaking change.
+
+        - Rust empowers you to design this kind of flexibility
+          through generics, trait bounds, lifetimes, and ownership choices.
+
+        💡 Takeaway: be minimal in restrictions, maximal in promises.
+    */
+    // Write a function process_lines that takes anything that can be turned into a str,
+    // and returns something that can be used as a str, while potentially allocating if needed.
+    #[allow(dead_code)]
+    pub fn process_lines<'a>(input: &'a impl AsRef<str>) -> Cow<'a, str> {
+        // In the body, if the string is less than 10 characters, return it as-is (borrowed); otherwise, return an uppercase owned string.
+        let input_str = input.as_ref();
+        if input_str.len() < 10 {
+            Cow::Borrowed(input_str) // return as owned string
+        } else {
+            Cow::Owned(input_str.to_uppercase()) // return as owned string
+        }
+    }
+}
+
+#[allow(dead_code)]
+mod generics {
+    use std::fmt::Debug;
+
+    /*
+        GENERIC ARGUMENTS
+
+        - Generics let you write one piece of code that works for many concrete types
+        - They increase flexibility *and* safety:
+            * The compiler will verify that only compatible types can be used
+            * You don't have to write code for each type manually
+
+        - Use trait bounds to express what your generic types are capable of
+            Example:
+                fn compare<T: PartialOrd>(a: T, b: T) -> Ordering
+
+        - Generics can apply to:
+            * Types (structs, enums, etc.)
+            * Functions
+            * Traits
+
+        - You can even make trait bounds generic themselves, via higher-ranked trait bounds.
+
+        - Generics also work with lifetimes and const generics in modern Rust:
+            * lifetimes: tie reference lifetimes together
+            * const generics: parameterize types over compile-time values (array sizes, etc)
+
+        - 💡 Takeaway: design with generics so your interfaces are future-proof,
+          reusable, and composable, while still type-safe.
+    */
+    // A generic compare_and_print function that takes any two comparable items and prints which one is larger, using a PartialOrd bound.
+    pub fn compare_and_print<T: PartialOrd + Debug>(input1: &T, input2: &T) {
+        if input1 < input2 {
+            println!("{:?} is less than {:?}", input1, input2);
+        } else if input1 > input2 {
+            println!("{:?} is greater than {:?}", input1, input2);
+        } else {
+            println!("{:?} is equal to {:?}", input1, input2);
+        }
+    }
+
+    /*
+        HASVALUE TRAIT
+
+        - Demonstrates using an associated type to access inner fields generically
+        - Any type implementing HasValue promises a `.value()` method returning
+          something PartialOrd + Debug
+    */
+    pub trait HasValue {
+        type Value: PartialOrd + Debug;
+
+        fn value(&self) -> &Self::Value;
+    }
+
+    // generic function comparing inner values
+    pub fn compare_inner_values<T: HasValue>(a: &T, b: &T) {
+        if a.value() < b.value() {
+            println!("{:?} is less than {:?}", a.value(), b.value());
+        } else if a.value() > b.value() {
+            println!("{:?} is greater than {:?}", a.value(), b.value());
+        } else {
+            println!("{:?} is equal to {:?}", a.value(), b.value());
+        }
+    }
+
+    // sample type
+    pub struct NumberWrapper {
+        pub value: i32,
+    }
+
+    impl HasValue for NumberWrapper {
+        type Value = i32;
+
+        fn value(&self) -> &Self::Value {
+            &self.value
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -99,5 +229,40 @@ mod tests {
             i_value: 42,
         };
         assert_eq!(ty, ty2);
+    }
+
+    #[test]
+    fn test_flexible_interface() {
+        // test the flexible interface
+        let input = "short";
+        let result = flexible::process_lines(&input);
+        assert_eq!(result, Cow::Borrowed("short"));
+
+        let input = "this is a long string";
+        let result = flexible::process_lines(&input);
+        assert_eq!(
+            result,
+            Cow::Owned::<str>("THIS IS A LONG STRING".to_string())
+        );
+    }
+
+    #[test]
+    fn test_generic_compare_and_print() {
+        // test the generic compare_and_print function
+        let a = 5;
+        let b = 10;
+        generics::compare_and_print(&a, &b);
+        let c = "hello";
+        let d = "world";
+        generics::compare_and_print(&c, &d);
+        // We can't assert the output directly, but we can visually check it in the console.
+    }
+
+    #[test]
+    fn test_compare_inner_values() {
+        let a = generics::NumberWrapper { value: 5 };
+        let b = generics::NumberWrapper { value: 10 };
+        generics::compare_inner_values(&a, &b);
+        // again, visually check console
     }
 }
