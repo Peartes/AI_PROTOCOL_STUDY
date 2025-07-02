@@ -207,6 +207,160 @@ mod generics {
     }
 }
 
+#[allow(dead_code)]
+mod idiomatic {
+    /*
+        REUSING EXISTING TRAITS
+
+        - If your type is an abstraction over a sequence:
+            * Implement Iterator with .next()
+            * This allows you to use for-loops, collect, map, filter, etc.
+
+        - If your type converts from or to another:
+            * Implement From<T> for U or Into<U> for T
+            * This enables `.into()` and `try_from` style idioms
+
+        - Benefits of using existing traits:
+            * your type instantly works with standard library functions
+            * no surprise for your users
+            * fewer bugs
+            * easier to test
+            * easier to extend later
+
+        - Think of these traits as "protocols" for common patterns:
+            * sequence-like? → Iterator
+            * convertible?   → From / Into
+            * reference-like? → Deref / AsRef
+
+        - 💡 Takeaway: Always reach for a well-known trait first before rolling your own.
+    */
+    /*
+    Write a tiny struct called Countdown which counts down from a start value to zero.
+    ✅ Implement Iterator for it.
+    ✅ Also implement From<u32> so you can do Countdown::from(10) to make one.
+    */
+    struct Countdown {
+        current: u32,
+    }
+    impl Iterator for Countdown {
+        type Item = u32;
+        fn next(&mut self) -> Option<Self::Item> {
+            if let Some(remainder) = self.current.checked_sub(1) {
+                self.current = remainder;
+                Some(remainder)
+            } else {
+                None
+            }
+        }
+    }
+
+    impl From<u32> for Countdown {
+        fn from(value: u32) -> Self {
+            Countdown { current: value }
+        }
+    }
+}
+
+#[allow(dead_code)]
+mod error {
+    use std::fmt::Display;
+
+
+    /*
+        ERROR HANDLING INTERFACES
+
+        - Rust uses typed errors (Result<T, E>) to propagate failures predictably
+        - You should define a custom error enum if:
+            * there are multiple distinct failure modes
+            * you need to integrate with other error layers
+
+        - Implement the std::error::Error trait to allow other code to .source()
+          and to describe your error in a standard way.
+
+        - Also implement Display for your error so human-friendly messages are available
+          in logs or at user interfaces.
+
+        - Example of idiomatic custom error:
+            enum MyError {
+                NotFound,
+                BadInput(String),
+                Io(std::io::Error),
+            }
+
+        - You can use `thiserror` or `anyhow` to help manage errors ergonomically
+          but understanding the manual pattern is critical.
+
+        💡 Takeaway: typed, descriptive, standard-trait errors are the Rust norm.
+    */
+    /*
+    Let’s write a custom error:
+    ✅ Define an enum ParseNumberError with variants:
+        •	Empty
+        •	InvalidDigit
+        •	Overflow
+
+    ✅ Implement:
+        •	Debug
+        •	Display
+        •	std::error::Error
+
+        Then write a tiny function:
+
+        fn parse_number(s: &str) -> Result<u32, ParseNumberError>
+
+        which:
+        •	returns Ok(n) for a valid u32
+        •	returns Empty if input is empty
+        •	returns InvalidDigit if parsing fails
+        •	returns Overflow if parsing exceeds u32::MAX
+    */
+    pub enum ParseNumberError {
+        Empty,
+        InvalidDigit,
+        Overflow,
+    }
+
+    impl std::fmt::Debug for ParseNumberError {
+        fn fmt(&self, value: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error>{
+            match self {
+                ParseNumberError::Empty => write!(value, "ParseNumberError::Empty"),
+                ParseNumberError::InvalidDigit => write!(value, "ParseNumberError::InvalidDigit"),
+                ParseNumberError::Overflow => write!(value, "ParseNumberError::Overflow"),
+            }
+        }
+    }
+
+    impl Display for ParseNumberError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                ParseNumberError::Empty => write!(f, "Input string is empty"),
+                ParseNumberError::InvalidDigit => write!(f, "Input contains invalid digit"),
+                ParseNumberError::Overflow => write!(f, "Input exceeds maximum value for u32"),
+            }
+        }
+    }
+
+    impl std::error::Error for ParseNumberError {}
+
+    pub fn parse_number(s: &str) -> Result<u32, ParseNumberError> {
+        if s.is_empty() {
+            return Err(ParseNumberError::Empty);
+        }
+
+        let mut result = 0u32;
+        for c in s.chars() {
+            if !c.is_digit(10) {
+                return Err(ParseNumberError::InvalidDigit);
+            }
+            let digit = c.to_digit(10).unwrap();
+            if result > u32::MAX / 10 || (result == u32::MAX / 10 && digit > 9) {
+                return Err(ParseNumberError::Overflow);
+            }
+            result = result * 10 + digit as u32;
+        }
+        Ok(result)
+    }
+}
 #[cfg(test)]
 mod tests {
 
