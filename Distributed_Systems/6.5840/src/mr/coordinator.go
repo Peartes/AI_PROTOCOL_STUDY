@@ -9,69 +9,126 @@ import (
 	"sync"
 )
 
-
-type Coordinator struct {
+/*
+Coordinator is the main struct that holds the state of the MapReduce job.
+All file splits to be processed are stored in splits.
+The pendingMapJobs are the map jobs not yet processed. when all map jobs are done, this array should be empty
+The processingMapJobs is an array of map jobs that are currently being processed.
+The completedMapJobs is an array of all completed map jobs ... when all map jobs are done this array's length is len(splits)
+# intermediateFiles is the sorted list of intermediate files produced by map jobs workers.
+# This list is sorted to group together all similar intermediate files that must contain similar intermediate keys
+# The key is the intermediate file partition and the value is all intermediate files fileName (i.e. files created to hold all intermediate k/v that fall into a partition)
+# This works because there are at most R intermediate files (from the partitioning algo)
+The pendingReduces is an array of all pending reduce jobs. When all reduce jobs are done, this array must be empty
+The processingReduces is the array of currently processing reduce jobs
+The completedReduces is an array of completed reduce jobs. When all reduce jobs are done this array's length should be len(keys(intermediateFile))
+# since there are at most R (number of reduce jobs) intermediate files
+nReduce is the number of reduce jobs to create
+nMap is the number of map jobs to create
+*/
+type Coordinator[T comparable] struct {
 	// Your definitions here.
-	pendingSplits []string // the original file splits (fileNames) not yet worked on
-	processingMaps map[int]string // a map of job id to the split they're working
-	intermediateFiles map[int][]string // map of the reduce jobs (partition) not yet worked on to their intermediate file
-	pendingReduces []int // the reduces not yet done
-	processingReduce  map[int]int // map of reduce job to the current reduce worker
+	splits               []string
+	pendingMapJobs       []MapJob
+	processingMapJobs    []MapJob
+	completedMapJobs     []MapJob
+	intermediateFiles    map[T][]string
+	pendingReduceJobs    []ReduceJob[T]
+	processingReduceJobs []ReduceJob[T]
+	completedReduceJobs  []ReduceJob[T]
+	nMap int
+	nReduce int
 }
 
 var mu sync.Mutex
+
 // we want to keep track of how long a task has been running
 // so we can detect if a worker has crashed. we use 10s
 // as the default timeout.
 func checkAllTaskStatus() {}
+
 // Your code here -- RPC handlers for the worker to call.
 
-func (c *Coordinator) JobDone(args *JobDoneReq , reply *JobDoneReply) error {
-	if args.TaskType == Map {
-		// remove from processing
-		mu.Lock()
+// find the index of a job in the job array
+func findMapJobAtIndex(s []MapJob, key int) int {
+	for idx, job := range s {
+		if job.JobId == key {
+			return idx
+		}
+	}
+	return -1
+}
+func removeMapJobAtIndex(s []MapJob, i int) []MapJob {
+	return append(s[:i], s[i+1:]...)
+}
+
+// find the index of a job in the job array
+func findReduceJobAtIndex[T comparable](s []ReduceJob[T], key int) int {
+	for idx, job := range s {
+		if job.JobId == key {
+			return idx
+		}
+	}
+	return -1
+}
+func removeReduceJobAtIndex[T comparable](s []ReduceJob[T], i int) []ReduceJob[T] {
+	return append(s[:i], s[i+1:]...)
+}
+
+func (c *Coordinator[T]) JobDone(args *JobDoneReq[T], reply *JobDoneReply) error {
+	mu.Lock()
+	if args.JobType == Map {
+		jobIdx := findMapJobAtIndex(c.processingMapJobs, args.Job.MapJob.JobId)
+		if jobIdx == -1 {
+			// this finished job is not is not supposed to be processing
+			// might be a stale worker whose job has been re-assigned
+			return nil
+		}
 		if args.err == nil {
-			delete(c.processingMaps, args.TaskNumber)
-			// set the response of this map job as pending reduces jobs
-			for _, reduceJobId := range args.MapJobPartitions {
-				c.intermediateFiles[reduceJobId.PartitionId] = append(c.intermediateFiles[reduceJobId.PartitionId], reduceJobId.Path)
-				c.pendingReduces = append(c.pendingReduces, reduceJobId.PartitionId)
+			// this map job is complete
+			c.completedMapJobs = append(c.completedMapJobs, args.Job.MapJob)
+			// sort the response of the map jobs which is the intermediate files using their partition id
+			for _, partitions := range args.MapJobPartitions.IntermediateFiles {
+				c.intermediateFiles[partitions.PartitionId] = append(c.intermediateFiles[partitions.PartitionId], partitions.FileName)
+			}
+			// if this is the last map job, let's assign the reduce jobs
+			if len(c.completedMapJobs) == len(c.splits) {
+				i := 0
+				for partitionId, _ := range c.intermediateFiles {
+					c.pendingReduceJobs = append(c.pendingReduceJobs, ReduceJob[T]{JobId: i, IntermediateFilePointer: partitionId })
+					i++
+				}
 			}
 		} else {
 			// an error occurred in processing so let's add the job back to pending
-			failedSplitFile := c.processingMaps[args.TaskNumber]
-			c.pendingSplits = append(c.pendingSplits, failedSplitFile)
+			c.pendingMapJobs = append(c.pendingMapJobs, args.Job.MapJob)
 		}
+		// remove from processing
+		c.processingMapJobs = removeMapJobAtIndex(c.processingMapJobs, jobIdx)
 		mu.Unlock()
 	} else {
-		// remove this task from the processing reduces
 		mu.Lock()
-		if args.err == nil {
-			delete(c.processingReduce, args.TaskNumber)
-		} else {
-			c.pendingReduces = append(c.pendingReduces, args.TaskNumber)
+		jobIdx := findReduceJobAtIndex(c.processingReduceJobs, args.Job.ReduceJob.JobId)
+		if jobIdx == -1 {
+			// this must be a stale worker response
+			return nil
 		}
+		if args.err == nil {
+			// this reduce job completed successfully
+			c.completedReduceJobs = append(c.completedReduceJobs, args.Job.ReduceJob)
+		} else {
+			c.pendingReduceJobs = append(c.pendingReduceJobs, args.Job.ReduceJob)
+		}
+		// remove the job from processing jobs
+		c.processingReduceJobs = removeReduceJobAtIndex(c.processingReduceJobs, jobIdx)
 		mu.Unlock()
 	}
 	return nil
 }
 
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
-
-//
 // start a thread that listens for RPCs from worker.go
-//
-func (c *Coordinator) server() {
-	rpc.Register(c)
+func (c *Coordinator[T]) server() {
+	rpc.RegisterName("Coordinator", c)
 	rpc.HandleHTTP()
 	//l, e := net.Listen("tcp", ":1234")
 	sockname := coordinatorSock()
@@ -83,30 +140,83 @@ func (c *Coordinator) server() {
 	go http.Serve(l, nil)
 }
 
-//
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
-//
-func (c *Coordinator) Done() bool {
+func (c *Coordinator[T]) Done() bool {
 	ret := false
 
-	// Your code here.
-	if (len(c.pendingSplits) == 0 && len(c.processingMaps) == 0 && len(c.pendingReduces)= 0 && c.processingReduce == 0) {
-		 ret = true
+	// the map reduce library is done when all pending and processing reduce and map tasks are done
+	// and the number of the completed reduce tasks is equal to the total number of reduce jobs
+	if len(c.pendingReduceJobs) == 0 && len(c.processingReduceJobs) == 0 && len(c.completedReduceJobs) > 0 && len(c.completedReduceJobs)  == len(c.intermediateFiles) {
+		ret = true
 	}
 
 	return ret
 }
 
-//
+func (c *Coordinator[T]) RequestJob(args *GetJobRequest, reply *GetJobReply[T]) error {
+	// we only reduce jobs after all map jobs are done
+	mu.Lock()
+	if len(c.pendingMapJobs) > 0 {
+		// there are still map jobs
+		job := c.pendingMapJobs[0]
+		// remove this pending job
+		c.pendingMapJobs = c.pendingMapJobs[1:]
+		reply.JobType = Map
+		reply.Job = Job[T]{
+			MapJob: job,
+			ReduceJob: ReduceJob[T]{},
+		}
+		reply.Files = []string{job.SplitFile}
+		// move the job into the processing array
+		c.processingMapJobs = append(c.processingMapJobs, job)
+	} else if len(c.processingMapJobs) > 0 {
+		// there are still running map jobs
+		// we will wait until they're done
+		reply.Wait = true
+	} else {
+		// all map jobs must be done
+		if len(c.completedMapJobs) < len(c.splits) {
+			// TODO: this does not have to be a panic since we can just run the missing job
+			// but it shows some problem in our logic most likely race condition
+			panic("some map jobs are missing")
+		}
+		job := c.pendingReduceJobs[0]
+		// remove this pending job
+		c.pendingReduceJobs = c.pendingReduceJobs[1:]
+		reply.JobType = Reduce
+		reply.Job = Job[T]{
+			MapJob{},
+			job,
+		}
+		reply.Files = c.intermediateFiles[job.IntermediateFilePointer]
+		// move the job into the processing array
+		c.processingReduceJobs = append(c.processingReduceJobs, job)
+	}
+	mu.Unlock()
+	return nil
+}
+
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
-//
-func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+func MakeCoordinator[T comparable](files []string, nReduce int) *Coordinator[T] {
+	c := Coordinator[T]{
+		splits: files,
+		processingMapJobs: []MapJob{},
+		completedMapJobs: []MapJob{},
+		pendingReduceJobs: []ReduceJob[T]{},
+		processingReduceJobs: []ReduceJob[T]{},
+		completedReduceJobs: []ReduceJob[T]{},
+		intermediateFiles: map[T][]string{},
+		nMap: len(files),
+		nReduce: nReduce,
+	}
 
-	// Your code here.
+	// build the pending map jobs
+	for i, split := range files {
+		c.pendingMapJobs = append(c.pendingMapJobs, MapJob{JobId: i, SplitFile: split, nReduce: nReduce})
+	}
 
 	c.server()
 	return &c

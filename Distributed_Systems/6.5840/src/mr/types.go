@@ -1,33 +1,49 @@
 package mr
 
-type TaskType string
+type JobType string
 
-var Map, Reduce TaskType
+var Map, Reduce JobType = "Map", "Reduce"
 
-type MapJobPartitions struct {
-	PartitionId int // the file where the map job intermediate res is stored
-	Path string // where is this file located ? but more like what it's name is
+type MapJob struct {
+	JobId     int    // the job id
+	SplitFile string // the split file this job is working on
+	nReduce   int    // number of intermediate files to split intermediate results into
 }
 
-type JobDoneReq struct {
-	TaskNumber int // the map or reduce job id
-	TaskType TaskType
-	MapJobPartitions []MapJobPartitions // all the files where the intermediate map results are stored
+type ReduceJob[T any] struct {
+	JobId int // the job id; 
+	IntermediateFilePointer T // the partition key for this job to handle 
+}
+
+type Job[T comparable] struct {
+	MapJob
+	ReduceJob[T] 
+}
+
+type IntermediateFile[T comparable] struct {
+	PartitionId T
+	FileName string
+}
+type MapJobIntermediateFiles[T comparable] struct {
+	IntermediateFiles []IntermediateFile[T] // the intermediate files where all the intermediate k/v pairs are stored based on the partition algo
+}
+
+type JobDoneReq[T comparable] struct {
+	JobType JobType
+	Job Job[T]
+	MapJobPartitions MapJobIntermediateFiles[T] // all the files where the intermediate map results are stored
 	err error // was there an error ?
 }
 
-type JobDoneReply struct {
+type JobDoneReply struct {}
 
-}
+type GetJobRequest struct {}
 
-type GetTaskRequest struct {
-}
-
-type GetTaskReply struct {
-	TaskType   TaskType // "Map" or "Reduce"
-	TaskNumber int    // task number for this Map or Reduce task
+type GetJobReply[T comparable] struct {
+	JobType   JobType // "Map" or "Reduce"
+	Job Job[T]
 	Files       []string // input files for Map tasks, or intermediate files for Reduce tasks
-	Partitions int // number of intermediate files to create for a map task
+	Wait bool // flag to instruct the worker to wait some time for a job assignment
 }
 
 // for sorting by key.
