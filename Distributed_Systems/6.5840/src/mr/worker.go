@@ -57,7 +57,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			file, err := os.Open(reply.Files[0]) // for a map function, we send just one file per map
 			if err != nil {
 				log.Printf("map worker %d could not open file %s there's no need to continue with map job\n", reply.Job.MapJob.JobId, reply.Files[0])
-				doneArgs.err = fmt.Errorf("map worker %d could not open file %s there's no need to continue with map job", reply.Job.MapJob.JobId, reply.Files[0])
+				doneArgs.Err = fmt.Errorf("map worker %d could not open file %s there's no need to continue with map job", reply.Job.MapJob.JobId, reply.Files[0]).Error()
 				ok := call("Coordinator.JobDone", &doneArgs, &doneReply)
 				if !ok {
 					// coordinator is done let's exit
@@ -68,7 +68,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			content, err := ioutil.ReadAll(file)
 			if err != nil {
 				log.Printf("map worker %d could not read file %s there's no need to continue with map job\n", reply.Job.MapJob.JobId, reply.Files[0])
-				doneArgs.err = fmt.Errorf("map worker %d could not read file %s there's no need to continue with map job", reply.Job.MapJob.JobId, reply.Files[0])
+				doneArgs.Err = fmt.Errorf("map worker %d could not read file %s there's no need to continue with map job", reply.Job.MapJob.JobId, reply.Files[0]).Error()
 				ok = call("Coordinator.JobDone", &doneArgs, &doneReply)
 				if !ok {
 					// coordinator is done let's exit
@@ -76,6 +76,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 				continue
 			}
+			file.Close()
 			// call the user map function
 			// TODO: add a recover here to gracefully recover from failed map
 			mapRes := mapf(strconv.Itoa(reply.Job.MapJob.JobId), string(content))
@@ -83,11 +84,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			// TODO: optimize writing to partition
 			mapJobPartitions := map[int]string{}
 			for _, kv := range mapRes {
-				partition := ihash(kv.Key) % reply.Job.MapJob.nReduce
-				ofile, err := os.OpenFile(fmt.Sprintf("map-%d-%d", reply.Job.MapJob.JobId, partition), os.O_CREATE | os.O_WRONLY | os.O_APPEND, 0644)
+				partition := ihash(kv.Key) % reply.Job.MapJob.NReduce
+				ofile, err := os.OpenFile(fmt.Sprintf("map-%d-%d", reply.Job.MapJob.JobId, partition), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 				if err != nil {
 					log.Printf("cannot open file to write partition %d of map task %d\n", partition, reply.Job.MapJob.JobId)
-					doneArgs.err = fmt.Errorf("cannot open file to write partition %d of map task %d", partition, reply.Job.MapJob.JobId)
+					doneArgs.Err = fmt.Errorf("cannot open file to write partition %d of map task %d", partition, reply.Job.MapJob.JobId).Error()
 					ok = call("Coordinator.JobDone", &doneArgs, &doneReply)
 					if !ok {
 						// coordinator is done let's exit
@@ -99,8 +100,9 @@ func Worker(mapf func(string, string) []KeyValue,
 				jsonEnc := json.NewEncoder(ofile)
 				jsonEnc.Encode(kv)
 				mapJobPartitions[partition] = ofile.Name()
+				ofile.Close()
 			}
-			if doneArgs.err != nil {
+			if doneArgs.Err != "" {
 				// if we already reported an error, just ask for a new task
 				continue
 			}
@@ -111,8 +113,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			// respond to the coordinator
 			doneArgs = JobDoneReq[int]{
-				JobType:         Map,
-				Job: reply.Job,
+				JobType:          Map,
+				Job:              reply.Job,
 				MapJobPartitions: jobPartitions,
 			}
 		} else {
@@ -121,13 +123,13 @@ func Worker(mapf func(string, string) []KeyValue,
 			for _, file := range reply.Files {
 				// make sure that if we had recorded an error while reading files
 				// break the loop
-				if doneArgs.err != nil {
+				if doneArgs.Err != "" {
 					break
 				}
 				fileD, err := os.Open(file)
 				if err != nil {
 					log.Printf("reduce task %d cannot open intermediate file %s\n", reply.Job.ReduceJob.JobId, file)
-					doneArgs.err = fmt.Errorf("reduce task %d cannot open intermediate file %s", reply.Job.ReduceJob.JobId, file)
+					doneArgs.Err = fmt.Errorf("reduce task %d cannot open intermediate file %s", reply.Job.ReduceJob.JobId, file).Error()
 					ok = call("Coordinator.JobDone", &doneArgs, &doneReply)
 					if !ok {
 						return
@@ -140,7 +142,7 @@ func Worker(mapf func(string, string) []KeyValue,
 					var kv KeyValue
 					if err := jsonDec.Decode(&kv); err != nil {
 						log.Printf("cannot read json encoded intermediate file %s", file)
-						doneArgs.err = fmt.Errorf("cannot read json encoded intermediate file %s", file)
+						doneArgs.Err = fmt.Errorf("cannot read json encoded intermediate file %s", file).Error()
 						ok = call("Coordinator.JobDone", &doneArgs, &doneReply)
 						if !ok {
 							return
@@ -149,9 +151,13 @@ func Worker(mapf func(string, string) []KeyValue,
 					}
 					kva = append(kva, kv)
 				}
+				fileD.Close()
+				if doneArgs.Err != "" {
+					break
+				}
 			}
-			if doneArgs.err != nil {
-				continue
+			if doneArgs.Err != "" {
+				continue // if we had an error reading the files, just ask for a new task
 			}
 			// sort the intermediate keys because multiple keys can map to
 			// a partition (reducer job id) but we want to send unique
@@ -160,9 +166,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			// reduce (k2,list(v2)) → list(v2)
 			sort.Sort(ByKey(kva))
 
-			oname := fmt.Sprintf("mr-out-%s", reply.Job.ReduceJob.JobId)
+			oname := fmt.Sprintf("mr-out-%d", reply.Job.ReduceJob.JobId)
 			ofile, _ := os.Create(oname)
-
 			//
 			// call Reduce on each distinct key in intermediate[],
 			// and print the result to mr-out-0.
@@ -184,12 +189,13 @@ func Worker(mapf func(string, string) []KeyValue,
 
 				i = j
 			}
+			ofile.Close()
 			// reply to the coordinator
 			doneArgs = JobDoneReq[int]{
-				JobType: Reduce,
-				Job: reply.Job,
+				JobType:          Reduce,
+				Job:              reply.Job,
 				MapJobPartitions: MapJobIntermediateFiles[int]{},
-				err:   nil,
+				Err:              doneArgs.Err,
 			}
 		}
 		ok = call("Coordinator.JobDone", &doneArgs, &doneReply)

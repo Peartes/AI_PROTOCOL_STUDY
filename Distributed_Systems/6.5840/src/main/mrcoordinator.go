@@ -35,7 +35,7 @@ func main() {
         absFiles = append(absFiles, abs)
     }
 
-	m := mr.MakeCoordinator[int](absFiles, 10)
+	m := mr.MakeCoordinator[int](os.Args[1:], 10)
 	for m.Done() == false {
 		time.Sleep(time.Second)
 	}

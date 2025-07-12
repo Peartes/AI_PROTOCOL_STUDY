@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -76,15 +77,19 @@ func removeReduceJobAtIndex[T comparable](s []ReduceJob[T], i int) []ReduceJob[T
 }
 
 func (c *Coordinator[T]) JobDone(args *JobDoneReq[T], reply *JobDoneReply) error {
+	fmt.Println("JobDone called")
 	mu.Lock()
 	if args.JobType == Map {
+		fmt.Printf("JobDone called for map job %d\n", args.Job.MapJob.JobId)
 		jobIdx := findMapJobAtIndex(c.processingMapJobs, args.Job.MapJob.JobId)
 		if jobIdx == -1 {
 			// this finished job is not is not supposed to be processing
 			// might be a stale worker whose job has been re-assigned
+			fmt.Printf("JobDone called for map job %d but it is not in processing jobs\n", args.Job.MapJob.JobId)
+			mu.Unlock()
 			return nil
 		}
-		if args.err == nil {
+		if args.Err == "" {
 			// this map job is complete
 			c.completedMapJobs = append(c.completedMapJobs, args.Job.MapJob)
 			// sort the response of the map jobs which is the intermediate files using their partition id
@@ -96,27 +101,31 @@ func (c *Coordinator[T]) JobDone(args *JobDoneReq[T], reply *JobDoneReply) error
 				i := 0
 				for partitionId, _ := range c.intermediateFiles {
 					c.pendingReduceJobs = append(c.pendingReduceJobs, ReduceJob[T]{JobId: i, IntermediateFilePointer: partitionId })
-					i++
+					i = i + 1
 				}
 			}
 		} else {
 			// an error occurred in processing so let's add the job back to pending
+			fmt.Printf("JobDone called for map job %d but it had an error: %v\n", args.Job.MapJob.JobId, args.Err)
 			c.pendingMapJobs = append(c.pendingMapJobs, args.Job.MapJob)
 		}
 		// remove from processing
 		c.processingMapJobs = removeMapJobAtIndex(c.processingMapJobs, jobIdx)
 		mu.Unlock()
 	} else {
-		mu.Lock()
+		fmt.Printf("JobDone called for reduce job %d\n", args.Job.ReduceJob.JobId)
 		jobIdx := findReduceJobAtIndex(c.processingReduceJobs, args.Job.ReduceJob.JobId)
 		if jobIdx == -1 {
 			// this must be a stale worker response
+			fmt.Printf("JobDone called for reduce job %d but it is not in processing jobs\n", args.Job.ReduceJob.JobId)
+			mu.Unlock()
 			return nil
 		}
-		if args.err == nil {
+		if args.Err == "" {
 			// this reduce job completed successfully
 			c.completedReduceJobs = append(c.completedReduceJobs, args.Job.ReduceJob)
 		} else {
+			fmt.Printf("JobDone called for reduce job %d but it had an error: %v\n", args.Job.ReduceJob.JobId, args.Err)
 			c.pendingReduceJobs = append(c.pendingReduceJobs, args.Job.ReduceJob)
 		}
 		// remove the job from processing jobs
@@ -156,6 +165,7 @@ func (c *Coordinator[T]) Done() bool {
 
 func (c *Coordinator[T]) RequestJob(args *GetJobRequest, reply *GetJobReply[T]) error {
 	// we only reduce jobs after all map jobs are done
+	fmt.Println("RequestJob called")
 	mu.Lock()
 	if len(c.pendingMapJobs) > 0 {
 		// there are still map jobs
@@ -170,10 +180,12 @@ func (c *Coordinator[T]) RequestJob(args *GetJobRequest, reply *GetJobReply[T]) 
 		reply.Files = []string{job.SplitFile}
 		// move the job into the processing array
 		c.processingMapJobs = append(c.processingMapJobs, job)
+		fmt.Printf("Worker assigned map job %d for file %s\n", job.JobId, job.SplitFile)
 	} else if len(c.processingMapJobs) > 0 {
 		// there are still running map jobs
 		// we will wait until they're done
 		reply.Wait = true
+		fmt.Println("Worker waiting for map jobs to complete")
 	} else {
 		// all map jobs must be done
 		if len(c.completedMapJobs) < len(c.splits) {
@@ -192,6 +204,7 @@ func (c *Coordinator[T]) RequestJob(args *GetJobRequest, reply *GetJobReply[T]) 
 		reply.Files = c.intermediateFiles[job.IntermediateFilePointer]
 		// move the job into the processing array
 		c.processingReduceJobs = append(c.processingReduceJobs, job)
+		fmt.Printf("Worker assigned reduce job %d for intermediate files %v\n", job.JobId, reply.Files)
 	}
 	mu.Unlock()
 	return nil
@@ -215,7 +228,7 @@ func MakeCoordinator[T comparable](files []string, nReduce int) *Coordinator[T] 
 
 	// build the pending map jobs
 	for i, split := range files {
-		c.pendingMapJobs = append(c.pendingMapJobs, MapJob{JobId: i, SplitFile: split, nReduce: nReduce})
+		c.pendingMapJobs = append(c.pendingMapJobs, MapJob{JobId: i, SplitFile: split, NReduce: nReduce})
 	}
 
 	c.server()

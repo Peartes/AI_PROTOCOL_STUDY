@@ -7,7 +7,7 @@ var Map, Reduce JobType = "Map", "Reduce"
 type MapJob struct {
 	JobId     int    // the job id
 	SplitFile string // the split file this job is working on
-	nReduce   int    // number of intermediate files to split intermediate results into
+	NReduce   int    // number of intermediate files to split intermediate results into
 }
 
 type ReduceJob[T any] struct {
@@ -32,7 +32,7 @@ type JobDoneReq[T comparable] struct {
 	JobType JobType
 	Job Job[T]
 	MapJobPartitions MapJobIntermediateFiles[T] // all the files where the intermediate map results are stored
-	err error // was there an error ?
+	Err string // was there an error ?
 }
 
 type JobDoneReply struct {}
