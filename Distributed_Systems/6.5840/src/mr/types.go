@@ -5,14 +5,16 @@ type JobType string
 var Map, Reduce JobType = "Map", "Reduce"
 
 type MapJob struct {
-	JobId     int    // the job id
+	JobId    int    // the job id
 	SplitFile string // the split file this job is working on
 	NReduce   int    // number of intermediate files to split intermediate results into
+	TimeStarted string // the time this job started
 }
 
 type ReduceJob[T any] struct {
 	JobId int // the job id; 
 	IntermediateFilePointer T // the partition key for this job to handle 
+	TimeStarted string // the time this job started
 }
 
 type Job[T comparable] struct {
@@ -44,6 +46,7 @@ type GetJobReply[T comparable] struct {
 	Job Job[T]
 	Files       []string // input files for Map tasks, or intermediate files for Reduce tasks
 	Wait bool // flag to instruct the worker to wait some time for a job assignment
+	Exit bool // flag to instruct the worker to exit
 }
 
 // for sorting by key.

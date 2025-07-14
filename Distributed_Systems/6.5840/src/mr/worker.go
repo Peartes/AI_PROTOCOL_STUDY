@@ -4,19 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/rpc"
 	"os"
 	"sort"
-	"strconv"
 	"time"
 )
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
-	Key   string
-	Value string
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // use ihash(key) % NReduce to choose the reduce
@@ -52,6 +52,10 @@ func Worker(mapf func(string, string) []KeyValue,
 			time.Sleep(time.Millisecond * 1000)
 			continue
 		}
+		if reply.Exit {
+			log.Printf("worker exiting because coordinator signaled exit")
+			return // coordinator signaled exit, so we exit the worker
+		}
 		if reply.JobType == Map {
 			// read the input files
 			file, err := os.Open(reply.Files[0]) // for a map function, we send just one file per map
@@ -66,7 +70,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				continue
 			}
 			content, err := ioutil.ReadAll(file)
-			if err != nil {
+			if err != nil && err != io.EOF {
 				log.Printf("map worker %d could not read file %s there's no need to continue with map job\n", reply.Job.MapJob.JobId, reply.Files[0])
 				doneArgs.Err = fmt.Errorf("map worker %d could not read file %s there's no need to continue with map job", reply.Job.MapJob.JobId, reply.Files[0]).Error()
 				ok = call("Coordinator.JobDone", &doneArgs, &doneReply)
@@ -75,17 +79,28 @@ func Worker(mapf func(string, string) []KeyValue,
 					return
 				}
 				continue
+			} else if err == io.EOF {
+				break // end of file reached
 			}
 			file.Close()
 			// call the user map function
 			// TODO: add a recover here to gracefully recover from failed map
-			mapRes := mapf(strconv.Itoa(reply.Job.MapJob.JobId), string(content))
+			mapRes := mapf(reply.Job.MapJob.SplitFile, string(content))
 			// partition the intermediate responses into files
 			// TODO: optimize writing to partition
 			mapJobPartitions := map[int]string{}
+			uuid := fmt.Sprintf("%d", os.Getpid())
+			iKVPartition := make(map[int][]KeyValue)
 			for _, kv := range mapRes {
 				partition := ihash(kv.Key) % reply.Job.MapJob.NReduce
-				ofile, err := os.OpenFile(fmt.Sprintf("map-%d-%d", reply.Job.MapJob.JobId, partition), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+				iKVPartition[partition] = append(iKVPartition[partition], kv)
+			}
+			// write the intermediate key/value pairs to files
+			// each partition will have its own file
+			// the file name will be map-<jobId>-<partitionId>-<uuid>
+			// where uuid is a unique identifier for the map function
+			for partition, kvs := range iKVPartition {
+				ofile, err := os.OpenFile(fmt.Sprintf("map-%d-%d-%s", reply.Job.MapJob.JobId, partition, uuid), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 				if err != nil {
 					log.Printf("cannot open file to write partition %d of map task %d\n", partition, reply.Job.MapJob.JobId)
 					doneArgs.Err = fmt.Errorf("cannot open file to write partition %d of map task %d", partition, reply.Job.MapJob.JobId).Error()
@@ -98,7 +113,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 				// write out the intermediate kv as a json string to the file
 				jsonEnc := json.NewEncoder(ofile)
-				jsonEnc.Encode(kv)
+				jsonEnc.Encode(kvs)
 				mapJobPartitions[partition] = ofile.Name()
 				ofile.Close()
 			}
@@ -139,17 +154,19 @@ func Worker(mapf func(string, string) []KeyValue,
 
 				jsonDec := json.NewDecoder(fileD)
 				for {
-					var kv KeyValue
-					if err := jsonDec.Decode(&kv); err != nil {
-						log.Printf("cannot read json encoded intermediate file %s", file)
+					var kvs []KeyValue
+					if err := jsonDec.Decode(&kvs); err != nil && err != io.EOF {
+						log.Printf("cannot read json encoded intermediate file %s %v", file, err)
 						doneArgs.Err = fmt.Errorf("cannot read json encoded intermediate file %s", file).Error()
 						ok = call("Coordinator.JobDone", &doneArgs, &doneReply)
 						if !ok {
 							return
 						}
 						break
+					} else if err == io.EOF {
+						break // end of file reached
 					}
-					kva = append(kva, kv)
+					kva = append(kva, kvs...)
 				}
 				fileD.Close()
 				if doneArgs.Err != "" {

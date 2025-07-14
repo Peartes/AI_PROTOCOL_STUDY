@@ -17,6 +17,7 @@
             "request": "launch",
             "mode": "exec",
             "preLaunchTask": "build-mapreduce-coordinator",
+            "cwd": "${workspaceFolder}/Distributed_Systems/6.5840/src/main",
             "program": "${workspaceFolder}/Distributed_Systems/6.5840/src/main/mrcoordinator",
             "args": [
                 "pg-being_ernest.txt", "pg-dorian_gray.txt", "pg-frankenstein.txt", 
@@ -34,6 +35,7 @@
             "preLaunchTask": "build-all-mapreduce",
             "console": "integratedTerminal",
             "trace": "verbose",
+            "cwd": "${workspaceFolder}/Distributed_Systems/6.5840/src/main",
             "program": "${workspaceFolder}/Distributed_Systems/6.5840/src/main/mrworker",
             "args": ["${workspaceFolder}/Distributed_Systems/6.5840/src/main/wc.so"],
             "env": {},
