@@ -84,9 +84,9 @@ func checkAllTaskStatus[T comparable](c *Coordinator[T]) {
 			log.Printf("Reduce job %d has been running for more than 10 seconds, it might have crashed", job.JobId)
 			// we can re-assign this job to another worker
 			c.pendingReduceJobs = append(c.pendingReduceJobs, job)
-			jobIdx := findMapJobAtIndex(c.processingMapJobs, job.JobId)
+			jobIdx := findReduceJobAtIndex(c.processingReduceJobs, job.JobId)
 			if jobIdx == -1 {
-				log.Printf("Map job %d is not in processing jobs, it might have been re-assigned already", job.JobId)
+				log.Printf("Reduce job %d is not in processing jobs, it might have been re-assigned already", job.JobId)
 				continue
 			}
 			c.processingReduceJobs = removeReduceJobAtIndex(c.processingReduceJobs, jobIdx)
@@ -284,6 +284,7 @@ func MakeCoordinator[T comparable](files []string, nReduce int) *Coordinator[T] 
 		intermediateFiles:    map[T][]string{},
 		nMap:                 len(files),
 		nReduce:              nReduce,
+		done:                 make(chan struct{}),
 	}
 
 	// build the pending map jobs
@@ -301,7 +302,7 @@ func MakeCoordinator[T comparable](files []string, nReduce int) *Coordinator[T] 
 				return
 			default:
 				checkAllTaskStatus(&c)
-				time.Sleep(10 * time.Second)
+				time.Sleep(5 * time.Second)
 			}
 		}
 	}()
