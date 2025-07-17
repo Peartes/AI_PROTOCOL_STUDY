@@ -1,19 +1,23 @@
 package kvsrv
 
-import "6.5840/labrpc"
-import "testing"
-import "os"
+import (
+	"os"
+	"strconv"
+	"testing"
 
-//import "log"
-import crand "crypto/rand"
-import "math/big"
-import "math/rand"
-import "encoding/base64"
-import "sync"
-import "runtime"
-import "fmt"
-import "time"
-import "sync/atomic"
+	"6.5840/labrpc"
+
+	//import "log"
+	crand "crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"math/big"
+	"math/rand"
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"time"
+)
 
 const SERVERID = 0
 
@@ -167,4 +171,14 @@ func (cfg *config) end() {
 		fmt.Printf("  ... Passed --")
 		fmt.Printf(" t %4.1f nrpc %5d ops %4d\n", t, nrpc, ops)
 	}
+}
+
+// Cook up a unique-ish UNIX-domain socket name
+// in /var/tmp, for the coordinator.
+// Can't use the current directory since
+// Athena AFS doesn't support UNIX-domain sockets.
+func coordinatorSock() string {
+	s := "/var/tmp/5840-mr-"
+	s += strconv.Itoa(os.Getuid())
+	return s
 }

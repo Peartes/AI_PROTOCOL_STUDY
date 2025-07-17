@@ -7,5 +7,8 @@
   "rust-analyzer.diagnostics.styleLints.enable": true,
   "rust-analyzer.inlayHints.closureCaptureHints.enable": true,
   "rust-analyzer.inlayHints.genericParameterHints.lifetime.enable": false,
-  "rust-analyzer.interpret.tests": true
+  "rust-analyzer.interpret.tests": true,
+  "cSpell.words": [
+    "linearizability"
+  ]
 }
