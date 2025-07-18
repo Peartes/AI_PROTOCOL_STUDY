@@ -21,7 +21,7 @@ type KVServer struct {
 	state map[string]string
 	// this is the mapping of the requestid (clientid+req_num) -> response in order to not reprocess a retransmitted request
 	// which will break consistency (linearizability)
-	processed map[string]string
+	processed map[string]map[string]string
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -35,20 +35,18 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	requestId := fmt.Sprintf("%s%d", args.ClientId, args.RequestNumber)
-	oldRequestId := fmt.Sprintf("%s%d", args.ClientId, args.RequestNumber-1)
-	value, ok := kv.processed[requestId]
+	_, ok := kv.processed[args.ClientId][requestId]
 	if !ok {
 		// this is a new request so let's process it
 		// oldValue := kv.state[args.Key]
 		// send back the new value of this key
-		reply.Value = args.Value
+		reply.Value = ""
 		kv.state[args.Key] = args.Value
 		// save this in our processed state in case of re-transmissions
-		delete(kv.processed, oldRequestId)
-		kv.processed[requestId] = args.Value
+		kv.processed[args.ClientId] = map[string]string{requestId: ""}
 	} else {
 		// we have processed this request, return back the value
-		reply.Value = value
+		reply.Value = ""
 	}
 }
 
@@ -62,8 +60,7 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	requestId := fmt.Sprintf("%s%d", args.ClientId, args.RequestNumber)
-	oldRequestId := fmt.Sprintf("%s%d", args.ClientId, args.RequestNumber-1)
-	value, ok := kv.processed[requestId]
+	value, ok := kv.processed[args.ClientId][requestId]
 	if !ok {
 		// this is a new request so let's process it
 		oldValue := kv.state[args.Key]
@@ -71,8 +68,7 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Value = oldValue
 		kv.state[args.Key] = fmt.Sprintf("%s%s", oldValue, args.Value)
 		// save this in our processed state in case of re-transmissions
-		delete(kv.processed, oldRequestId)
-		kv.processed[requestId] = oldValue
+		kv.processed[args.ClientId] = map[string]string{requestId: oldValue}
 	} else {
 		// we have processed this request, return back the value
 		reply.Value = value
@@ -84,7 +80,7 @@ func StartKVServer() *KVServer {
 
 	// You may need initialization code here.
 	kv.state = map[string]string{}
-	kv.processed = map[string]string{}
+	kv.processed = map[string]map[string]string{}
 
 	return kv
 }
