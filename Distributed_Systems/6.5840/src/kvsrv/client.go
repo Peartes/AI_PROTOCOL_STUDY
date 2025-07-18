@@ -3,17 +3,17 @@ package kvsrv
 import (
 	"crypto/rand"
 	"math/big"
-	"net/rpc"
+	"strconv"
+	"sync"
 
 	"6.5840/labrpc"
 )
 
-
 type Clerk struct {
-	server *labrpc.ClientEnd
-	requestNumber int // monotonically increasing on every request
-	clientId string // unique id for this client
-	
+	server        *labrpc.ClientEnd
+	requestNumber int    // monotonically increasing on every request
+	clientId      string // unique id for this client
+	mu            sync.Mutex
 }
 
 func nrand() int64 {
@@ -26,6 +26,8 @@ func nrand() int64 {
 func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
+	ck.clientId = strconv.Itoa(int(nrand()))
+	ck.requestNumber = 1
 	// You'll have to add code here.
 	return ck
 }
@@ -41,12 +43,17 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{Key: key}
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	args := GetArgs{Key: key, ClientId: ck.clientId, RequestNumber: ck.requestNumber}
 	reply := &GetReply{}
-	err := ck.call("KVServer", &args, reply)
-	if !err {
-		ck.requestNumber = ck.requestNumber + 1
+	done := ck.server.Call("KVServer.Get", &args, reply)
+
+	for !done {
+		reply = &GetReply{}
+		done = ck.server.Call("KVServer.Get", &args, reply)
 	}
+	ck.requestNumber = ck.requestNumber + 1
 	return reply.Value
 }
 
@@ -59,12 +66,18 @@ func (ck *Clerk) Get(key string) string {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
-	args := PutAppendArgs{Key: key, Value: value}
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	args := PutAppendArgs{Key: key, Value: value, ClientId: ck.clientId, RequestNumber: ck.requestNumber}
 	reply := &GetReply{}
-	err := ck.call("KVServer."+op, &args, reply)
-	if !err {
-		ck.requestNumber = ck.requestNumber + 1
+	done := ck.server.Call("KVServer."+op, &args, reply)
+
+	for !done {
+		reply = &GetReply{}
+		done = ck.server.Call("KVServer."+op, &args, reply)
+
 	}
+	ck.requestNumber = ck.requestNumber + 1
 	return reply.Value
 }
 
@@ -76,23 +89,4 @@ func (ck *Clerk) Put(key string, value string) {
 // Append value to key's value and return that value
 func (ck *Clerk) Append(key string, value string) string {
 	return ck.PutAppend(key, value, "Append")
-}
-
-// send an RPC request to the coordinator, wait for the response.
-// usually returns true.
-// returns false if something goes wrong.
-func (ck *Clerk) call(rpcname string, args any, reply any) bool {
-	c, err := rpc.DialHTTP("unix", coordinatorSock())
-	if err != nil {
-		DPrintf("error dialing server %v:", err.Error())
-	}
-	defer c.Close()
-
-	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
-	}
-
-	DPrintf(err.Error())
-	return false
 }
