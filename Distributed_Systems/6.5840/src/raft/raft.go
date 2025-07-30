@@ -150,12 +150,18 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
+	Term         int      //candidate’s term
+	CandidateId  int  // candidate requesting vote
+	LastLogIndex int // index of candidate’s last log entry (§5.4)
+	LastLogTerm  int// term of candidate’s last log entry (§5.4)
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (3A).
+	Term        int // currentTerm, for candidate to update itself
+	VoteGranted bool // true means candidate received vote
 }
 
 // example RequestVote RPC handler.
@@ -260,6 +266,26 @@ func (rf *Raft) ticker() {
 		rf.timeout = time.Duration(ms)
 		rf.mu.Unlock()
 		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
+}
+
+func startElection(rf *Raft) {
+	voteResponses := []RequestVoteReply{}
+	for idx, _ := range rf.peers {
+		if idx == rf.me {
+			continue
+		}
+
+		go func (voteResponses []RequestVoteReply, idx int) {
+			args := RequestVoteArgs{
+				Term: rf.currentTerm,
+				CandidateId: rf.me,
+				LastLogIndex: len(rf.logs) - 1,
+				LastLogTerm: rf.logs[len(rf.logs) - 1].term,
+			}
+			reply := RequestVoteReply{}
+			ok := rf.sendRequestVote(idx, &args, &reply)
+		}(voteResponses, idx)
 	}
 }
 
