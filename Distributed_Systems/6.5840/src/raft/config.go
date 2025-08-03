@@ -281,7 +281,7 @@ func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	}
 
 	// a fresh set of ClientEnds.
-	ends := make([]*labrpc.ClientEnd, cfg.n)
+	ends := make([]labrpc.ServiceEndpoint, cfg.n)
 	for j := 0; j < cfg.n; j++ {
 		ends[j] = cfg.net.MakeEnd(cfg.endnames[i][j])
 		cfg.net.Connect(cfg.endnames[i][j], j)

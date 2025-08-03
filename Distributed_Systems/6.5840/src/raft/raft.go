@@ -22,7 +22,13 @@ import (
 
 	"bytes"
 	"errors"
+	"fmt"
+	"log"
 	"math/rand"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -54,11 +60,11 @@ type ApplyMsg struct {
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	persister *Persister          // Object to hold this peer's persisted state
-	me        int                 // this peer's index into peers[]
-	dead      int32               // set by Kill()
+	mu        sync.Mutex               // Lock to protect shared access to this peer's state
+	peers     []labrpc.ServiceEndpoint // RPC end points of all peers
+	persister *Persister               // Object to hold this peer's persisted state
+	me        int                      // this peer's index into peers[]
+	dead      int32                    // set by Kill()
 	timeout   time.Time
 	state     State
 
@@ -114,14 +120,15 @@ func (rf *Raft) GetState() (int, bool) {
 // second argument to persister.Save().
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
-func (rf *Raft) persist() {
+// N.B. only call this method when you have a lock
+func (rf *Raft) persist(currentTerm, votedFor int, logs []LogEntries) {
 	// Your code here (3C).
-	// Example:
+	// save current term, votedFor, and logs
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor)
-	e.Encode(rf.logs)
+	e.Encode(currentTerm)
+	e.Encode(votedFor)
+	e.Encode(logs)
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
 }
@@ -135,8 +142,8 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.votedFor = -1
 		rf.logs = []LogEntries{}
 		rf.state = Follower
-		rf.leaderId = -1 // no leader yet
-		rf.persist()     // persist the initial state
+		rf.leaderId = -1                                 // no leader yet
+		rf.persist(rf.currentTerm, rf.votedFor, rf.logs) // persist the initial state
 		return
 	}
 	r := bytes.NewBuffer(data)
@@ -224,21 +231,24 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) AppendEntry(args *AppendEntry, reply *AppendEntryReply) {
+func (rf *Raft) AppendEntry(args *AppendEntry, reply *AppendEntryReply) error {
 	if !rf.killed() {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
+		DPrintf("server %d received appendentry request from server %d their term - %d, me term - %d", rf.me, args.LeaderId, args.Term, rf.currentTerm)
 		// check that this leader is not stale
 		if args.Term < rf.currentTerm {
+			DPrintf("server %d rejected appendentry request from server %d; their term - %d, me term - %d", rf.me, args.LeaderId, args.Term, rf.currentTerm)
+
 			reply.Term = rf.currentTerm
 			reply.Success = false
-			return
+			return nil
 		}
 		// set ourself as follower
 		rf.state = Follower
 		rf.currentTerm = args.Term
 		// persist state
-		rf.persist()
+		rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
 		// reset our election timeout; in this case just set the last heartbeat time
 		rf.timeout = time.Now().Add(time.Duration(500+rand.Int63()%200) * time.Millisecond)
 		rf.leaderId = args.LeaderId
@@ -246,6 +256,7 @@ func (rf *Raft) AppendEntry(args *AppendEntry, reply *AppendEntryReply) {
 		reply.Term = rf.currentTerm
 		reply.Success = true
 	}
+	return nil
 }
 
 func (rf *Raft) ticker() {
@@ -286,29 +297,29 @@ func (rf *Raft) startElection() {
 	rf.currentTerm = rf.currentTerm + 1
 	rf.state = Candidate
 	rf.votedFor = rf.me
-	rf.persist() // save term and vote
+	rf.persist(rf.currentTerm, rf.votedFor, rf.logs) // save term and vote
 	DPrintf("Server %d starting election for term %d due to timeout %v %v", rf.me, rf.currentTerm, time.Now(), rf.timeout)
 	var voteMu sync.Mutex
 	votes := 1 // we have one vote for ourself
+	lastLogTerm := 0
+	lastLogIndex := len(rf.logs) - 1
+	if lastLogIndex >= 0 {
+		lastLogTerm = rf.logs[lastLogIndex].Term
+	}
+
+	args := RequestVoteArgs{
+		Term:         rf.currentTerm,
+		CandidateId:  rf.me,
+		LastLogIndex: lastLogIndex,
+		LastLogTerm:  lastLogTerm,
+	}
 	for peer, _ := range rf.peers {
 		if peer == rf.me {
 			continue
 		}
-		lastLogTerm := 0
-		lastLogIndex := len(rf.logs) - 1
-		if lastLogIndex >= 0 {
-			lastLogTerm = rf.logs[lastLogIndex].Term
-		}
-
-		args := &RequestVoteArgs{
-			Term:         rf.currentTerm,
-			CandidateId:  rf.me,
-			LastLogIndex: lastLogIndex,
-			LastLogTerm:  lastLogTerm,
-		}
-		go func(peer int) {
+		go func(peer int, arg RequestVoteArgs) {
 			reply := RequestVoteReply{}
-			ok := rf.sendRequestVote(peer, args, &reply)
+			ok := rf.sendRequestVote(peer, &args, &reply)
 			if ok {
 				rf.mu.Lock()
 				if reply.Term > rf.currentTerm {
@@ -316,7 +327,7 @@ func (rf *Raft) startElection() {
 					DPrintf("Server %d received a higher term %d from %d, reverting to follower", rf.me, reply.Term, peer)
 					rf.currentTerm = reply.Term
 					rf.votedFor = -1
-					rf.persist()
+					rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
 					// set our state to follower
 					rf.state = Follower
 					rf.mu.Unlock()
@@ -324,30 +335,30 @@ func (rf *Raft) startElection() {
 				}
 				// check if we have won the election but if we are follower it would not matter
 				if reply.VoteGranted && rf.state == Candidate {
-					rf.mu.Unlock()
 					voteMu.Lock()
 					votes += 1
 					if votes > len(rf.peers)/2 {
 						// we have won the election
 						DPrintf("Server %d won the election for term %d with %d votes", rf.me, rf.currentTerm, votes)
 						voteMu.Unlock()
-						rf.becomeLeader()
+						rf.state = Leader
+						rf.leaderId = rf.me // set ourself as leader
+						term := rf.currentTerm
+						rf.mu.Unlock()
+						go rf.becomeLeader(term)
 					} else {
+						rf.mu.Unlock()
 						voteMu.Unlock()
 					}
+				} else {
+					rf.mu.Unlock()
 				}
 			}
-		}(peer)
+		}(peer, args)
 	}
 }
 
-func (rf *Raft) becomeLeader() {
-	rf.mu.Lock()
-	rf.state = Leader
-	rf.leaderId = rf.me // set ourself as leader
-	// start sending heartbeats
-	term := rf.currentTerm
-	rf.mu.Unlock()
+func (rf *Raft) becomeLeader(term int) {
 	for !rf.killed() {
 		rf.mu.Lock()
 		if rf.state != Leader {
@@ -362,11 +373,14 @@ func (rf *Raft) becomeLeader() {
 			Term:     term,
 			LeaderId: rf.me,
 		}
+		rf.mu.Unlock()
 		for peer, _ := range rf.peers {
+			if peer == rf.me {
+				continue
+			}
 			reply := &AppendEntryReply{}
 			go rf.sendHeartBeat(peer, args, reply)
 		}
-		rf.mu.Unlock()
 		// sleep this thread for 100 milliseconds then send append entries again
 		time.Sleep(time.Duration(100) * time.Millisecond)
 	}
@@ -379,10 +393,11 @@ func (rf *Raft) sendHeartBeat(peer int, args *AppendEntry, reply *AppendEntryRep
 		defer rf.mu.Unlock()
 		if reply.Term > rf.currentTerm {
 			// I am stale, this server has a more up-to-date log and hence some other leader with up-to-date log
+			DPrintf("received a term %d higher than my term %d from server; stepping down as leader", reply.Term, rf.currentTerm)
 			rf.state = Follower
 			rf.currentTerm = args.Term
 			rf.votedFor = -1
-			rf.persist()
+			rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
 			rf.leaderId = args.LeaderId
 		}
 	}
@@ -420,39 +435,40 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error {
 	if !rf.killed() {
-		DPrintf("Server %d received RequestVote from %d: %v", rf.me, args.CandidateId, args)
+		DPrintf("Server %d received RequestVote from %d: term - %d", rf.me, args.CandidateId, args.Term)
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 		// Your code here (3A, 3B).
 		if args.Term < rf.currentTerm {
 			// this is a stale worker, update him; or we already voted
-			DPrintf("Server %d rejected RequestVote from %d: %v", rf.me, args.CandidateId, args)
+			DPrintf("Server %d rejected RequestVote from server %d: their term - %d; my term - %d", rf.me, args.CandidateId, args.Term, rf.currentTerm)
 			reply.Term = rf.currentTerm
 			reply.VoteGranted = false
-			return
+			return nil
 		}
 		if args.Term > rf.currentTerm {
 			// update our term and step down if necessary
 			rf.currentTerm = args.Term
 			rf.votedFor = -1
 			rf.state = Follower
-			rf.persist()
+			rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
 		}
 		reply.Term = rf.currentTerm
 
 		// Check if we can vote for this candidate
 		if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && candidateUpToDate(rf, args) {
 			rf.votedFor = args.CandidateId
-			rf.persist()
+			rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
 			reply.VoteGranted = true
-			DPrintf("Server %d voted for %d in term %d", rf.me, args.CandidateId, rf.currentTerm)
+			DPrintf("Server %d voted for server %d for term %d", rf.me, args.CandidateId, rf.currentTerm)
 		} else {
 			reply.VoteGranted = false
-			DPrintf("Server %d rejected vote for %d in term %d", rf.me, args.CandidateId, rf.currentTerm)
+			DPrintf("Server %d rejected vote for %d for term %d", rf.me, args.CandidateId, rf.currentTerm)
 		}
 	}
+	return nil
 }
 
 func candidateUpToDate(rf *Raft, args *RequestVoteArgs) bool {
@@ -477,13 +493,14 @@ func candidateUpToDate(rf *Raft, args *RequestVoteArgs) bool {
 // tester or service expects Raft to send ApplyMsg messages.
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
-func Make(peers []*labrpc.ClientEnd, me int,
+func Make(peers []labrpc.ServiceEndpoint, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
 	rf.state = Follower
+	rf.dead = 0
 	rf.timeout = time.Now().Add(time.Duration(500+rand.Int63()%200) * time.Millisecond)
 
 	// Your initialization code here (3A, 3B, 3C).
@@ -492,6 +509,27 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+	// rf.server()
 
 	return rf
+}
+
+// create a raft server over a raft instance
+func (rf *Raft) server() {
+	rpc.RegisterName("Raft", rf)
+	rpc.HandleHTTP()
+	//l, e := net.Listen("tcp", ":1234")
+	sockname := CoordinatorSock(rf.me)
+	os.Remove(sockname)
+	l, e := net.Listen("unix", sockname)
+	if e != nil {
+		log.Fatal("listen error:", e)
+	}
+	go http.Serve(l, nil)
+	go rf.ticker()
+}
+
+func CoordinatorSock(id int) string {
+	s := fmt.Sprintf("/var/tmp/raft-%d", id)
+	return s
 }

@@ -78,6 +78,12 @@ type ClientEnd struct {
 	done    chan struct{} // closed when Network is cleaned up
 }
 
+type ServiceEndpoint interface {
+	Call(svcMeth string, args interface{}, reply interface{}) bool
+}
+
+var _ ServiceEndpoint = &ClientEnd{}
+
 // send an RPC, wait for the reply.
 // the return value indicates success; false means that
 // no reply was received from the server.
@@ -472,8 +478,7 @@ func MakeService(rcvr interface{}) *Service {
 		if method.PkgPath != "" || // capitalized?
 			mtype.NumIn() != 3 ||
 			//mtype.In(1).Kind() != reflect.Ptr ||
-			mtype.In(2).Kind() != reflect.Ptr ||
-			mtype.NumOut() != 0 {
+			mtype.In(2).Kind() != reflect.Ptr {
 			// the method is not suitable for a handler
 			//fmt.Printf("bad method: %v\n", mname)
 		} else {
