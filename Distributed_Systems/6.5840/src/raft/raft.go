@@ -65,6 +65,8 @@ type Raft struct {
 	persister *Persister               // Object to hold this peer's persisted state
 	me        int                      // this peer's index into peers[]
 	dead      int32                    // set by Kill()
+	shouldSendHeartBeat bool
+	shouldSendHeartBeatCond *sync.Cond
 	timeout   time.Time
 	state     State
 
@@ -86,7 +88,7 @@ var Follower State = "Follower"
 var Candidate State = "Candidate"
 
 type LogEntries struct {
-	Command string
+	Command any
 	Term    int
 }
 
@@ -203,11 +205,21 @@ type RequestVoteReply struct {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	index := -1
-	term := -1
-	isLeader := true
+	term := rf.currentTerm
+	isLeader := rf.leaderId == rf.me
 
 	// Your code here (3B).
+	if isLeader {
+		// Append the command to state
+		rf.logs = append(rf.logs, LogEntries{
+			Command: command,
+			Term: rf.currentTerm,
+		})
+		// try to replicate on majority of the servers
+	}
 
 	return index, term, isLeader
 }
@@ -359,6 +371,7 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) becomeLeader(term int) {
+	rf.shouldSendHeartBeat = true
 	for !rf.killed() {
 		rf.mu.Lock()
 		if rf.state != Leader {
@@ -366,6 +379,10 @@ func (rf *Raft) becomeLeader(term int) {
 			DPrintf("Server %d stopped sending heartbeats because it is no longer leader", rf.me)
 			rf.mu.Unlock()
 			break
+		}
+		// if we should not send heartbeat for example because a log is being sent
+		if !rf.shouldSendHeartBeat {
+			rf.shouldSendHeartBeatCond.Wait()
 		}
 		DPrintf("Server %d sending heartbeats for term %d", rf.me, rf.currentTerm)
 		// send heartbeats to all peers
@@ -501,6 +518,8 @@ func Make(peers []labrpc.ServiceEndpoint, me int,
 	rf.me = me
 	rf.state = Follower
 	rf.dead = 0
+	rf.shouldSendHeartBeat = false
+	rf.shouldSendHeartBeatCond = sync.NewCond(&rf.mu)
 	rf.timeout = time.Now().Add(time.Duration(500+rand.Int63()%200) * time.Millisecond)
 
 	// Your initialization code here (3A, 3B, 3C).
