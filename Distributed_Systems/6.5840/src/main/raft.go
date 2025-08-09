@@ -4,14 +4,29 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"reflect"
 	"strconv"
 
 	"6.5840/labrpc"
 	"6.5840/raft"
 )
+type reqMsg struct {
+	endname  interface{} // name of sending ClientEnd
+	svcMeth  string      // e.g. "Raft.AppendEntries"
+	argsType reflect.Type
+	args     []byte
+	replyCh  chan replyMsg
+}
+
+type replyMsg struct {
+	ok    bool
+	reply []byte
+}
 
 type RaftEndpoint struct {
-	name string // server socket
+	endName string   // this end-point's name
+	ch      chan reqMsg   // copy of Network.endCh
+	done    chan struct{} // closed when Network is cleaned up
 }
 
 var _ labrpc.ServiceEndpoint = &RaftEndpoint{}
@@ -33,16 +48,16 @@ func main() {
 	peers := make([]labrpc.ServiceEndpoint, servers)
 	persister := raft.MakePersister()
 	for i := 0; i < servers; i++ {
-		peers[i] = &RaftEndpoint{name: raft.CoordinatorSock(i)}
+		peers[i] = &RaftEndpoint{endName: raft.CoordinatorSock(i)}
 	}
 	raft.Make(peers, int(raftId), persister, nil)
 	select {}
 }
 
 func (re *RaftEndpoint) Call(svcMeth string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("unix", re.name)
+	c, err := rpc.DialHTTP("unix", re.endName)
 	if err != nil {
-		log.Print("dialing:%s failed", re.name)
+		log.Print("dialing:%s failed", re.endName)
 		return false
 	}
 	defer c.Close()
@@ -52,6 +67,6 @@ func (re *RaftEndpoint) Call(svcMeth string, args interface{}, reply interface{}
 		return true
 	}
 
-	log.Print("calling:%s failed", re.name)
+	log.Print("calling:%s failed", re.endName)
 	return false
 }

@@ -65,10 +65,9 @@ type Raft struct {
 	persister *Persister               // Object to hold this peer's persisted state
 	me        int                      // this peer's index into peers[]
 	dead      int32                    // set by Kill()
-	shouldSendHeartBeat bool
-	shouldSendHeartBeatCond *sync.Cond
 	timeout   time.Time
 	state     State
+	applyChan chan ApplyMsg
 
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
@@ -79,6 +78,18 @@ type Raft struct {
 	logs        []LogEntries
 
 	leaderId int // the index of the leader in peers
+
+	// volatile state - gotten from leader once instance joins the cluster
+	commitIndex int // the index of the highest entry known to be committed default to 0
+	lastApplied int // the index of the highest log entry applied to the state machine default to 0
+
+	// leader state
+	nextIndex []int //for each server, index of the next log entry
+	// to send to that server (initialized to leader
+	// last log index + 1)
+	matchIndex []int // for each server, index of highest log entry
+	// known to be replicated on server
+	// (initialized to 0, increases monotonically)
 }
 
 type State string
@@ -142,7 +153,12 @@ func (rf *Raft) readPersist(data []byte) {
 	if len(data) < 1 { // bootstrap without any state?
 		rf.currentTerm = 0
 		rf.votedFor = -1
-		rf.logs = []LogEntries{}
+		rf.logs = []LogEntries{
+			{
+				Command: nil,
+				Term:    0,
+			},
+		}
 		rf.state = Follower
 		rf.leaderId = -1                                 // no leader yet
 		rf.persist(rf.currentTerm, rf.votedFor, rf.logs) // persist the initial state
@@ -207,7 +223,7 @@ type RequestVoteReply struct {
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	index := -1
+	index := len(rf.logs) - 1
 	term := rf.currentTerm
 	isLeader := rf.leaderId == rf.me
 
@@ -216,12 +232,87 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		// Append the command to state
 		rf.logs = append(rf.logs, LogEntries{
 			Command: command,
-			Term: rf.currentTerm,
+			Term:    rf.currentTerm,
 		})
 		// try to replicate on majority of the servers
+		rf.replicateLog()
 	}
+	fmt.Printf("start command response by server %d, index: %d, term: %d, isLeader: %v", rf.me, index, term, isLeader)
 
 	return index, term, isLeader
+}
+
+func (rf *Raft) replicateLog() {
+	// if we are not leader or is dead, do not replicate
+	if rf.state != Leader || rf.killed() {
+		return
+	}
+	// make sure we send the proper log entry based on peer's next index
+	for peer, _ := range rf.peers {
+		if peer == rf.me {
+			continue
+		}
+		prevLogIndex := rf.nextIndex[peer] - 1
+		args := &AppendEntry{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			PrevLogIndex: rf.nextIndex[peer] - 1,
+			PrevLogTerm:  rf.logs[prevLogIndex].Term,
+			LeaderCommit: rf.commitIndex,
+			Entries:      rf.logs[rf.nextIndex[peer]:],
+		}
+		reply := &AppendEntryReply{}
+		go rf.sendAppendEntry(peer, args, reply)
+	}
+}
+
+func (rf *Raft) sendAppendEntry(peer int, args *AppendEntry, reply *AppendEntryReply) {
+	ok := rf.peers[peer].Call("Raft.AppendEntry", args, reply)
+	if ok {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		if reply.Term > rf.currentTerm {
+			// I am stale, this server has a more up-to-date log and hence some other leader with up-to-date log
+			DPrintf("received a term %d higher than my term %d from server; stepping down as leader", reply.Term, rf.currentTerm)
+			rf.state = Follower
+			rf.currentTerm = args.Term
+			rf.votedFor = -1
+			rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
+			rf.leaderId = args.LeaderId
+			return
+		}
+		if reply.Success {
+			// increase the next index for the peer and the match index
+			rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries)
+			rf.nextIndex[peer] = rf.matchIndex[peer] + 1
+			// get latest commit index for leader
+			// this is the index of the highest replicated log entry
+			rf.commitIndex = findHighestReplicatedLog(rf)
+			return
+		} else {
+			// the peer log index does not match ours
+			// as a lazy approach, we will decrement the index and try again later
+			// decrement the next index for this peer
+			rf.nextIndex[peer] = rf.nextIndex[peer] - 1
+		}
+	}
+}
+
+func findHighestReplicatedLog(rf *Raft) int {
+	countReplicatedLog := 0
+	for N := len(rf.logs) - 1; N > rf.commitIndex; N-- {
+		for peer := range rf.peers {
+			if rf.matchIndex[peer] >= N || peer == rf.me {
+				countReplicatedLog++
+			}
+		}
+		if countReplicatedLog > len(rf.peers) && rf.logs[countReplicatedLog].Term == rf.currentTerm {
+			// this index is in the majority server
+			return countReplicatedLog
+		}
+	}
+
+	return 0
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -262,13 +353,41 @@ func (rf *Raft) AppendEntry(args *AppendEntry, reply *AppendEntryReply) error {
 		// persist state
 		rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
 		// reset our election timeout; in this case just set the last heartbeat time
-		rf.timeout = time.Now().Add(time.Duration(500+rand.Int63()%200) * time.Millisecond)
 		rf.leaderId = args.LeaderId
-
 		reply.Term = rf.currentTerm
-		reply.Success = true
+		// check if my prev log entry matches the leaders
+		if args.PrevLogIndex == len(rf.logs)-1 && args.PrevLogTerm == rf.logs[len(rf.logs)-1].Term {
+			// our logs match, append the entries
+			rf.logs = append(rf.logs, args.Entries...)
+			// update my commit index if leaders is greate
+			if args.LeaderCommit > rf.commitIndex {
+				rf.commitIndex = args.LeaderCommit
+				// send an apply to the state machine
+				go applyLogToStateMachine(rf)
+			}
+			reply.Success = true
+		} else {
+			reply.Term = rf.currentTerm
+			reply.Success = false
+		}
+		rf.timeout = time.Now().Add(time.Duration(500+rand.Int63()%200) * time.Millisecond)
 	}
 	return nil
+}
+
+func applyLogToStateMachine(rf *Raft) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	for rf.lastApplied < rf.commitIndex {
+		command := rf.logs[rf.lastApplied+1]
+		// apply each log until the last applied is the commit index
+		rf.applyChan <- ApplyMsg{
+			CommandValid: true,
+			Command:      command,
+			CommandIndex: rf.lastApplied + 1,
+		}
+		rf.lastApplied += 1
+	}
 }
 
 func (rf *Raft) ticker() {
@@ -290,9 +409,10 @@ func (rf *Raft) ticker() {
 			rf.mu.Unlock()
 		}
 
-		// pause for a random amount of time between 50 and 350
-		// milliseconds.
-		ms := 50 + (rand.Int63() % 300)
+		// pause for a random amount of time between 500 and 700
+		// milliseconds since we must either have been leader or
+		// received an appendEntry
+		ms := 500 + (rand.Int63() % 200)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
@@ -313,11 +433,8 @@ func (rf *Raft) startElection() {
 	DPrintf("Server %d starting election for term %d due to timeout %v %v", rf.me, rf.currentTerm, time.Now(), rf.timeout)
 	var voteMu sync.Mutex
 	votes := 1 // we have one vote for ourself
-	lastLogTerm := 0
 	lastLogIndex := len(rf.logs) - 1
-	if lastLogIndex >= 0 {
-		lastLogTerm = rf.logs[lastLogIndex].Term
-	}
+	lastLogTerm := rf.logs[lastLogIndex].Term
 
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
@@ -371,52 +488,57 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) becomeLeader(term int) {
-	rf.shouldSendHeartBeat = true
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	// initialize peers next index to my last log index + 1
+	initializeLogIndex(rf)
+	resetMatchIndex(rf)
 	for !rf.killed() {
-		rf.mu.Lock()
 		if rf.state != Leader {
 			// if we are not leader anymore, stop sending heartbeats
 			DPrintf("Server %d stopped sending heartbeats because it is no longer leader", rf.me)
-			rf.mu.Unlock()
 			break
-		}
-		// if we should not send heartbeat for example because a log is being sent
-		if !rf.shouldSendHeartBeat {
-			rf.shouldSendHeartBeatCond.Wait()
 		}
 		DPrintf("Server %d sending heartbeats for term %d", rf.me, rf.currentTerm)
 		// send heartbeats to all peers
-		args := &AppendEntry{
-			Term:     term,
-			LeaderId: rf.me,
-		}
-		rf.mu.Unlock()
+		// make sure we send the proper log entry based on peer's next index
 		for peer, _ := range rf.peers {
 			if peer == rf.me {
 				continue
 			}
+			prevLogIndex := rf.nextIndex[peer] - 1
+			args := &AppendEntry{
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				PrevLogIndex: rf.nextIndex[peer] - 1,
+				PrevLogTerm:  rf.logs[prevLogIndex].Term,
+				LeaderCommit: rf.commitIndex,
+				Entries:      rf.logs[rf.nextIndex[peer]:],
+			}
 			reply := &AppendEntryReply{}
-			go rf.sendHeartBeat(peer, args, reply)
+			go rf.sendAppendEntry(peer, args, reply)
 		}
+
 		// sleep this thread for 100 milliseconds then send append entries again
 		time.Sleep(time.Duration(100) * time.Millisecond)
 	}
 }
 
-func (rf *Raft) sendHeartBeat(peer int, args *AppendEntry, reply *AppendEntryReply) {
-	ok := rf.peers[peer].Call("Raft.AppendEntry", args, reply)
-	if ok {
-		rf.mu.Lock()
-		defer rf.mu.Unlock()
-		if reply.Term > rf.currentTerm {
-			// I am stale, this server has a more up-to-date log and hence some other leader with up-to-date log
-			DPrintf("received a term %d higher than my term %d from server; stepping down as leader", reply.Term, rf.currentTerm)
-			rf.state = Follower
-			rf.currentTerm = args.Term
-			rf.votedFor = -1
-			rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
-			rf.leaderId = args.LeaderId
+func initializeLogIndex(rf *Raft) {
+	for peer := range rf.peers {
+		if peer == rf.me {
+			continue
 		}
+		rf.nextIndex[peer] = len(rf.logs)
+	}
+}
+
+func resetMatchIndex(rf *Raft) {
+	for peer := range rf.peers {
+		if peer == rf.me {
+			continue
+		}
+		rf.matchIndex[peer] = 0
 	}
 }
 
@@ -490,10 +612,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) erro
 
 func candidateUpToDate(rf *Raft, args *RequestVoteArgs) bool {
 	lastLogIndex := len(rf.logs) - 1
-	lastLogTerm := 0
-	if lastLogIndex >= 0 {
-		lastLogTerm = rf.logs[lastLogIndex].Term
-	}
+	lastLogTerm := rf.logs[lastLogIndex].Term
 
 	if args.LastLogTerm != lastLogTerm {
 		return args.LastLogTerm > lastLogTerm
@@ -518,9 +637,11 @@ func Make(peers []labrpc.ServiceEndpoint, me int,
 	rf.me = me
 	rf.state = Follower
 	rf.dead = 0
-	rf.shouldSendHeartBeat = false
-	rf.shouldSendHeartBeatCond = sync.NewCond(&rf.mu)
 	rf.timeout = time.Now().Add(time.Duration(500+rand.Int63()%200) * time.Millisecond)
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
 
 	// Your initialization code here (3A, 3B, 3C).
 	// initialize from state persisted before a crash
