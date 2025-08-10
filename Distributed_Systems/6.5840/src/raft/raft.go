@@ -238,7 +238,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		})
 		index = len(rf.logs) - 1
 		// try to replicate on majority of the servers
-		rf.replicateLog()
+		go rf.replicateLog()
 	}
 
 	return index, term, isLeader
@@ -251,6 +251,8 @@ func (rf *Raft) GetLeader() int {
 }
 
 func (rf *Raft) replicateLog() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	// if we are not leader or is dead, do not replicate
 	if rf.state != Leader || rf.killed() {
 		return
@@ -267,7 +269,7 @@ func (rf *Raft) replicateLog() {
 		args := &AppendEntry{
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
-			PrevLogIndex: rf.nextIndex[peer] - 1,
+			PrevLogIndex: prevLogIndex,
 			PrevLogTerm:  rf.logs[prevLogIndex].Term,
 			LeaderCommit: rf.commitIndex,
 			Entries:      rf.logs[rf.nextIndex[peer]:],
@@ -532,6 +534,7 @@ func (rf *Raft) becomeLeader(term int) {
 		if rf.state != Leader {
 			// if we are not leader anymore, stop sending heartbeats
 			DPrintf("Server %d stopped sending heartbeats because it is no longer leader", rf.me)
+			rf.mu.Unlock()
 			return
 		}
 		// DPrintf("Server %d sending heartbeats for term %d", rf.me, rf.currentTerm)
