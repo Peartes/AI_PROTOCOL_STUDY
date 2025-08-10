@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -166,16 +167,16 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
-	err := d.Decode(rf.currentTerm)
+	err := d.Decode(&rf.currentTerm)
 	if err != nil {
 		panic(errors.New("could not decode current term from disk"))
 	}
-	err = d.Decode(rf.votedFor)
+	err = d.Decode(&rf.votedFor)
 	if err != nil {
 		panic(errors.New("could not decode votedFor from disk"))
 	}
 
-	err = d.Decode(rf.logs)
+	err = d.Decode(&rf.logs)
 	if err != nil {
 		panic(errors.New("could not logs from disk"))
 	}
@@ -226,7 +227,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 	index := len(rf.logs) - 1
 	term := rf.currentTerm
-	isLeader := rf.leaderId == rf.me
+	isLeader := rf.state == Leader
 
 	// Your code here (3B).
 	if isLeader {
@@ -235,6 +236,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 			Term:    rf.currentTerm,
 		})
+		index = len(rf.logs) - 1
 		// try to replicate on majority of the servers
 		rf.replicateLog()
 	}
@@ -259,6 +261,9 @@ func (rf *Raft) replicateLog() {
 			continue
 		}
 		prevLogIndex := rf.nextIndex[peer] - 1
+		if prevLogIndex < 0 {
+			prevLogIndex = 0
+		}
 		args := &AppendEntry{
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
@@ -281,10 +286,10 @@ func (rf *Raft) sendAppendEntry(peer int, args *AppendEntry, reply *AppendEntryR
 			// I am stale, this server has a more up-to-date log and hence some other leader with up-to-date log
 			DPrintf("received a term %d higher than my term %d from server; stepping down as leader", reply.Term, rf.currentTerm)
 			rf.state = Follower
-			rf.currentTerm = args.Term
+			rf.currentTerm = reply.Term
 			rf.votedFor = -1
 			rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
-			rf.leaderId = args.LeaderId
+			rf.leaderId = -1 // set the leader to the peer
 			return
 		}
 		if reply.Success {
@@ -294,31 +299,48 @@ func (rf *Raft) sendAppendEntry(peer int, args *AppendEntry, reply *AppendEntryR
 			// get latest commit index for leader
 			// this is the index of the highest replicated log entry
 			rf.commitIndex = findHighestReplicatedLog(rf)
+			if len(args.Entries) > 0 {
+				log.Printf("server %d successfully replicated log entry to server %d", rf.me, peer)
+				log.Printf("peer new match index %d, next index %d, my commit index %d", rf.matchIndex[peer], rf.nextIndex[peer], rf.commitIndex)
+			}
 			return
 		} else {
 			// the peer log index does not match ours
 			// as a lazy approach, we will decrement the index and try again later
 			// decrement the next index for this peer
-			rf.nextIndex[peer] = rf.nextIndex[peer] - 1
+			if rf.nextIndex[peer] > 1 {
+				rf.nextIndex[peer] = rf.nextIndex[peer] - 1
+			} else {
+				rf.nextIndex[peer] = 1
+			}
+			if len(args.Entries) > 0 {
+				log.Printf("server %d failed to replicate log entry to server %d, next index is now %d", rf.me, peer, rf.nextIndex[peer])
+			}
 		}
+	} else {
+		// we cannot reach peer
+		log.Printf("server %d failed to send append entry to server %d", rf.me, peer)
 	}
 }
 
 func findHighestReplicatedLog(rf *Raft) int {
-	countReplicatedLog := 0
 	for N := len(rf.logs) - 1; N > rf.commitIndex; N-- {
+		cnt := 1 // self
 		for peer := range rf.peers {
-			if rf.matchIndex[peer] >= N || peer == rf.me {
-				countReplicatedLog++
+			if peer == rf.me {
+				continue
+			}
+			if rf.matchIndex[peer] >= N {
+				cnt++
 			}
 		}
-		if countReplicatedLog > len(rf.peers) && rf.logs[countReplicatedLog].Term == rf.currentTerm {
+		if cnt > len(rf.peers)/2 && rf.logs[N].Term == rf.currentTerm {
 			// this index is in the majority server
-			return countReplicatedLog
+			return N
 		}
 	}
 
-	return 0
+	return rf.commitIndex // if no majority found, return the current commit index
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -347,12 +369,17 @@ func (rf *Raft) AppendEntry(args *AppendEntry, reply *AppendEntryReply) error {
 		// check that this leader is not stale
 		if args.Term < rf.currentTerm {
 			DPrintf("server %d rejected appendentry request from server %d; their term - %d, me term - %d", rf.me, args.LeaderId, args.Term, rf.currentTerm)
-			
+
 			reply.Term = rf.currentTerm
 			reply.Success = false
 			return nil
 		}
-		DPrintf("server %d received appendentry request from server %d entrys %v", rf.me, args.LeaderId, args.Entries)
+
+		// log.Printf("received heartbeat from server %d", args.LeaderId)
+		if len(args.Entries) > 0 {
+			log.Printf("server %d received appendentry request from server %d entries %v", rf.me, args.LeaderId, args.Entries)
+		}
+		DPrintf("server %d received appendentry request from server %d entries %v", rf.me, args.LeaderId, args.Entries)
 		// set ourself as follower
 		rf.state = Follower
 		rf.currentTerm = args.Term
@@ -362,12 +389,12 @@ func (rf *Raft) AppendEntry(args *AppendEntry, reply *AppendEntryReply) error {
 		rf.leaderId = args.LeaderId
 		reply.Term = rf.currentTerm
 		// check if my prev log entry matches the leaders
-		if args.PrevLogIndex == len(rf.logs)-1 && args.PrevLogTerm == rf.logs[len(rf.logs)-1].Term {
+		if args.PrevLogIndex < len(rf.logs) && rf.logs[args.PrevLogIndex].Term == args.PrevLogTerm {
 			// our logs match, append the entries
 			rf.logs = append(rf.logs, args.Entries...)
-			// update my commit index if leaders is greate
+			// update my commit index if leaders is greater
 			if args.LeaderCommit > rf.commitIndex {
-				rf.commitIndex = args.LeaderCommit
+				rf.commitIndex = int(math.Min(float64(args.LeaderCommit), float64(len(rf.logs)-1)))
 				// send an apply to the state machine
 				go applyLogToStateMachine(rf)
 			}
@@ -418,7 +445,7 @@ func (rf *Raft) ticker() {
 		// pause for a random amount of time between 500 and 700
 		// milliseconds since we must either have been leader or
 		// received an appendEntry
-		ms := 500 + (rand.Int63() % 200)
+		ms := 50 + (rand.Int63() % 100)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
@@ -505,7 +532,7 @@ func (rf *Raft) becomeLeader(term int) {
 		if rf.state != Leader {
 			// if we are not leader anymore, stop sending heartbeats
 			DPrintf("Server %d stopped sending heartbeats because it is no longer leader", rf.me)
-			break
+			return
 		}
 		// DPrintf("Server %d sending heartbeats for term %d", rf.me, rf.currentTerm)
 		// send heartbeats to all peers
@@ -515,6 +542,9 @@ func (rf *Raft) becomeLeader(term int) {
 				continue
 			}
 			prevLogIndex := rf.nextIndex[peer] - 1
+			if prevLogIndex < 0 {
+				prevLogIndex = 0
+			}
 			args := &AppendEntry{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
@@ -526,10 +556,10 @@ func (rf *Raft) becomeLeader(term int) {
 			reply := &AppendEntryReply{}
 			go rf.sendAppendEntry(peer, args, reply)
 		}
-		
+
 		rf.mu.Unlock()
-		// sleep this thread for 100 milliseconds then send append entries again
-		time.Sleep(time.Duration(100) * time.Millisecond)
+		// sleep this thread for 120 milliseconds then send append entries again
+		time.Sleep(time.Duration(120) * time.Millisecond)
 	}
 }
 
@@ -610,6 +640,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) erro
 			rf.votedFor = args.CandidateId
 			rf.persist(rf.currentTerm, rf.votedFor, rf.logs)
 			reply.VoteGranted = true
+			// reset the election timeout since we have received a vote
+			rf.timeout = time.Now().Add(time.Duration(500+rand.Int63()%200) * time.Millisecond)
 			DPrintf("Server %d voted for server %d for term %d", rf.me, args.CandidateId, rf.currentTerm)
 		} else {
 			reply.VoteGranted = false
@@ -651,14 +683,19 @@ func Make(peers []labrpc.ServiceEndpoint, me int,
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
+	rf.applyChan = applyCh
+
+	if len(rf.logs) == 0 {
+		rf.logs = []LogEntries{{Term: 0}}
+	}
 
 	// Your initialization code here (3A, 3B, 3C).
 	// initialize from state persisted before a crash
-	go rf.readPersist(persister.ReadRaftState())
+	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-	rf.server()
+	// rf.server()
 
 	return rf
 }

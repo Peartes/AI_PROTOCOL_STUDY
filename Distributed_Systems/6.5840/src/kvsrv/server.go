@@ -101,7 +101,7 @@ func (kv *KVServer) AppendReplica(args *PutAppendArgs, reply *PutAppendReply) er
 	value, ok := kv.processed[args.ClientId][requestId]
 	if !ok {
 		// send request to raft to append the value
-		fmt.Printf("sending append request to raft for key %s with value %s", args.Key, args.Value)
+		fmt.Printf("sending append request to raft for key %s with value %s\n\n", args.Key, args.Value)
 		_, _, isLeader := kv.Raft.Start(args)
 		if !isLeader {
 			return fmt.Errorf("i'm not the leader, current leader is %d", kv.Raft.GetLeader())
