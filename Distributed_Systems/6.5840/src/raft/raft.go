@@ -221,6 +221,7 @@ type RequestVoteReply struct {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	log.Printf("server %d received start command with command %v", rf.me, command)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	index := len(rf.logs) - 1
@@ -237,9 +238,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		// try to replicate on majority of the servers
 		rf.replicateLog()
 	}
-	fmt.Printf("start command response by server %d, index: %d, term: %d, isLeader: %v", rf.me, index, term, isLeader)
 
 	return index, term, isLeader
+}
+
+func (rf *Raft) GetLeader() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.leaderId
 }
 
 func (rf *Raft) replicateLog() {
@@ -338,15 +344,15 @@ func (rf *Raft) AppendEntry(args *AppendEntry, reply *AppendEntryReply) error {
 	if !rf.killed() {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		DPrintf("server %d received appendentry request from server %d their term - %d, me term - %d", rf.me, args.LeaderId, args.Term, rf.currentTerm)
 		// check that this leader is not stale
 		if args.Term < rf.currentTerm {
 			DPrintf("server %d rejected appendentry request from server %d; their term - %d, me term - %d", rf.me, args.LeaderId, args.Term, rf.currentTerm)
-
+			
 			reply.Term = rf.currentTerm
 			reply.Success = false
 			return nil
 		}
+		DPrintf("server %d received appendentry request from server %d entrys %v", rf.me, args.LeaderId, args.Entries)
 		// set ourself as follower
 		rf.state = Follower
 		rf.currentTerm = args.Term
@@ -489,17 +495,19 @@ func (rf *Raft) startElection() {
 
 func (rf *Raft) becomeLeader(term int) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	log.Printf("Server %d is now leader for term %d", rf.me, term)
 	// initialize peers next index to my last log index + 1
 	initializeLogIndex(rf)
 	resetMatchIndex(rf)
+	rf.mu.Unlock()
 	for !rf.killed() {
+		rf.mu.Lock()
 		if rf.state != Leader {
 			// if we are not leader anymore, stop sending heartbeats
 			DPrintf("Server %d stopped sending heartbeats because it is no longer leader", rf.me)
 			break
 		}
-		DPrintf("Server %d sending heartbeats for term %d", rf.me, rf.currentTerm)
+		// DPrintf("Server %d sending heartbeats for term %d", rf.me, rf.currentTerm)
 		// send heartbeats to all peers
 		// make sure we send the proper log entry based on peer's next index
 		for peer, _ := range rf.peers {
@@ -518,7 +526,8 @@ func (rf *Raft) becomeLeader(term int) {
 			reply := &AppendEntryReply{}
 			go rf.sendAppendEntry(peer, args, reply)
 		}
-
+		
+		rf.mu.Unlock()
 		// sleep this thread for 100 milliseconds then send append entries again
 		time.Sleep(time.Duration(100) * time.Millisecond)
 	}
@@ -649,7 +658,7 @@ func Make(peers []labrpc.ServiceEndpoint, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-	// rf.server()
+	rf.server()
 
 	return rf
 }
@@ -665,6 +674,15 @@ func (rf *Raft) server() {
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
+	// pipe output to the log file
+	f, err := os.OpenFile(fmt.Sprintf("/tmp/raft-%d.log", rf.me), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+	if err != nil {
+		log.Fatal("could not open log file:", err)
+	}
+	log.SetOutput(f)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.Printf("Raft server %d started on %s", rf.me, sockname)
+	// start the HTTP server
 	go http.Serve(l, nil)
 	go rf.ticker()
 }

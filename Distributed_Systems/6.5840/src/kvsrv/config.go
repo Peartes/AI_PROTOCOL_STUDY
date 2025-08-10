@@ -106,7 +106,7 @@ func (cfg *config) ConnectClient(ck *Clerk) {
 }
 
 func (cfg *config) StartServer() {
-	cfg.kvserver = StartKVServer()
+	cfg.kvserver = StartKVServer("")
 
 	kvsvc := labrpc.MakeService(cfg.kvserver)
 	srv := labrpc.MakeServer()

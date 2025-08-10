@@ -2,7 +2,10 @@ package kvsrv
 
 import (
 	"crypto/rand"
+	"fmt"
+	"log"
 	"math/big"
+	"net/rpc"
 	"strconv"
 	"sync"
 
@@ -57,6 +60,21 @@ func (ck *Clerk) Get(key string) string {
 	return reply.Value
 }
 
+func (ck *Clerk) GetReplica(key string, server string) string {
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	args := GetArgs{Key: key, ClientId: ck.clientId, RequestNumber: ck.requestNumber}
+	reply := &GetReply{}
+	done := ck.call("KVServer.GetReplica", &args, reply, server)
+
+	for !done {
+		reply = &GetReply{}
+		done = ck.call("KVServer.GetReplica", &args, reply, server)
+	}
+	ck.requestNumber = ck.requestNumber + 1
+	return reply.Value
+}
+
 // shared by Put and Append.
 //
 // you can send an RPC with code like this:
@@ -89,4 +107,37 @@ func (ck *Clerk) Put(key string, value string) {
 // Append value to key's value and return that value
 func (ck *Clerk) Append(key string, value string) string {
 	return ck.PutAppend(key, value, "Append")
+}
+
+func (ck *Clerk) AppendReplica(key string, value string, server string) string {
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	args := PutAppendArgs{Key: key, Value: value, ClientId: ck.clientId, RequestNumber: ck.requestNumber}
+	reply := &GetReply{}
+	done := ck.call("KVServer.AppendReplica", &args, reply, server)
+
+	for !done {
+		reply = &GetReply{}
+		done = ck.call("KVServer.AppendReplica", &args, reply, server)
+	}
+	ck.requestNumber = ck.requestNumber + 1
+	return reply.Value
+}
+
+func (ck *Clerk) call(svcMeth string, args interface{}, reply interface{}, server string) bool {
+	sockName := fmt.Sprintf("/var/tmp/kv-%s.sock", server)
+	c, err := rpc.DialHTTP("unix", sockName)
+	if err != nil {
+		log.Printf("dialing:%s failed", sockName)
+		return false
+	}
+	defer c.Close()
+
+	err = c.Call(svcMeth, args, reply)
+	if err == nil {
+		return true
+	}
+
+	log.Printf("calling:%s failed", server)
+	return false
 }
