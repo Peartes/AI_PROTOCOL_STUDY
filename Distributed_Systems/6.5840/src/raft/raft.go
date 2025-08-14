@@ -301,6 +301,8 @@ func (rf *Raft) sendAppendEntry(peer int, args *AppendEntry, reply *AppendEntryR
 			// get latest commit index for leader
 			// this is the index of the highest replicated log entry
 			rf.commitIndex = findHighestReplicatedLog(rf)
+			// send an apply to the state machine
+			go applyLogToStateMachine(rf)
 			if len(args.Entries) > 0 {
 				log.Printf("server %d successfully replicated log entry to server %d", rf.me, peer)
 				log.Printf("peer new match index %d, next index %d, my commit index %d", rf.matchIndex[peer], rf.nextIndex[peer], rf.commitIndex)
@@ -414,7 +416,7 @@ func applyLogToStateMachine(rf *Raft) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	for rf.lastApplied < rf.commitIndex {
-		command := rf.logs[rf.lastApplied+1]
+		command := rf.logs[rf.lastApplied+1].Command
 		// apply each log until the last applied is the commit index
 		rf.applyChan <- ApplyMsg{
 			CommandValid: true,
@@ -698,9 +700,22 @@ func Make(peers []labrpc.ServiceEndpoint, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+	pipeLogToFile(rf)
 	// rf.server()
 
 	return rf
+}
+
+func pipeLogToFile(rf *Raft) {
+	// pipe output to the log file
+	sockname := CoordinatorSock(rf.me)
+	f, err := os.OpenFile(fmt.Sprintf("/tmp/raft-%d.log", rf.me), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+	if err != nil {
+		log.Fatal("could not open log file:", err)
+	}
+	log.SetOutput(f)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.Printf("Raft server %d started on %s", rf.me, sockname)
 }
 
 // create a raft server over a raft instance
@@ -714,14 +729,7 @@ func (rf *Raft) server() {
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	// pipe output to the log file
-	f, err := os.OpenFile(fmt.Sprintf("/tmp/raft-%d.log", rf.me), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-	if err != nil {
-		log.Fatal("could not open log file:", err)
-	}
-	log.SetOutput(f)
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Printf("Raft server %d started on %s", rf.me, sockname)
+	pipeLogToFile(rf)
 	// start the HTTP server
 	go http.Serve(l, nil)
 	go rf.ticker()

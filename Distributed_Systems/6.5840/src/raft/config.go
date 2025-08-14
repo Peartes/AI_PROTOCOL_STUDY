@@ -498,12 +498,15 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 		cfg.mu.Unlock()
 
 		if ok {
+			// fmt.Printf("server %d has committed index %d with value %v\n", i, index, cmd1)
 			if count > 0 && cmd != cmd1 {
 				cfg.t.Fatalf("committed values do not match: index %v, %v, %v",
 					index, cmd, cmd1)
 			}
 			count += 1
 			cmd = cmd1
+		} else {
+			// fmt.Printf("server %d has not committed index %d\n", i, index)
 		}
 	}
 	return count, cmd
@@ -555,7 +558,7 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	t0 := time.Now()
 	starts := 0
-	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
+	for time.Since(t0).Seconds() < 10 && !cfg.checkFinished() {
 		// try all the servers, maybe one is the leader.
 		index := -1
 		for si := 0; si < cfg.n; si++ {
@@ -569,6 +572,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			if rf != nil {
 				index1, _, ok := rf.Start(cmd)
 				if ok {
+					fmt.Printf("server %d is leader\n", rf.me)
 					index = index1
 					break
 				}
@@ -578,12 +582,15 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		if index != -1 {
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
+			// fmt.Printf("one(%v) waiting for %d servers to agree on index %d\n", cmd, expectedServers, index)
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
 				if nd > 0 && nd >= expectedServers {
+					// fmt.Printf("one(%v) got %d servers to agree on index %d\n", cmd, nd, index)
 					// committed
 					if cmd1 == cmd {
+						// fmt.Printf("one(%v) got %d servers to agree on index %d, and it was the command we submitted.\n", cmd, nd, index)
 						// and it was the command we submitted.
 						return index
 					}
